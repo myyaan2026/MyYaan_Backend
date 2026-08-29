@@ -67,6 +67,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id BIGINT;
 UPDATE users SET role_id = (SELECT id FROM roles WHERE code = 'user') WHERE role_id IS NULL;
 ALTER TABLE users ALTER COLUMN role_id SET NOT NULL;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_mobile_key;
+-- These indexes are required by the UPSERTs in userModel.js.  CREATE TABLE
+-- IF NOT EXISTS does not add them when `users`/`otp_codes` already exist.
 CREATE UNIQUE INDEX IF NOT EXISTS users_mobile_role_id_key ON users (mobile, role_id);
 DO $$ BEGIN
     ALTER TABLE users ADD CONSTRAINT users_role_id_fkey FOREIGN KEY (role_id) REFERENCES roles(id);
@@ -117,3 +119,6 @@ DELETE FROM otp_codes older USING otp_codes newer
 WHERE older.user_id = newer.user_id AND older.user_id IS NOT NULL
   AND (older.created_at, older.id) < (newer.created_at, newer.id);
 CREATE UNIQUE INDEX IF NOT EXISTS otp_codes_user_id_key ON otp_codes (user_id);
+
+-- Verify the two conflict targets used by createOtp:
+--   users(mobile, role_id) and otp_codes(user_id)
