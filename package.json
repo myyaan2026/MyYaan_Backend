@@ -2,10 +2,12 @@
   "name": "myyaan_backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
+    "start": "node src/index.js",
     "dev": "nodemon -L --watch src src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "db:migrate": "node src/data/runMigrations.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -15,7 +17,6 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "joi": "^18.2.3",
     "pg": "^8.23.0"
   },
   "devDependencies": {

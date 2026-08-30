@@ -4,10 +4,10 @@ import {
     getUserByIdService,
     verifyOtp as verifyOtpService,
 } from "../models/userModel.js";
+import { sendResponse } from "../utils/response.js";
 
 const OTP_EXPIRY_MINUTES = 5;
 const MOBILE_PATTERN = /^\d{7,15}$/;
-const sendResponse = (res, status, message, data = null) => res.status(status).json({ status, message, data });
 const normalizeMobile = (mobile) => String(mobile ?? "").replace(/[\s-]/g, "");
 const hashOtp = (otp) => crypto.createHash("sha256").update(otp).digest("hex");
 
@@ -20,6 +20,9 @@ const requestOtpForRole = (role) => async (req, res, next) => {
         const otp = crypto.randomInt(100000, 1000000).toString();
         const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
         const otpRecord = await createOtp(mobile, role, hashOtp(otp), expiresAt);
+        if (otpRecord.roleConflict) {
+            return sendResponse(res, 409, "User number already exists");
+        }
         if (otpRecord.isLoginDisabled) {
             return sendResponse(res, 403, "User account is disabled by admin. Please connect with the MyYaan team");
         }
@@ -39,9 +42,22 @@ const verifyOtpForRole = (role) => async (req, res, next) => {
         return sendResponse(res, 400, "Provide a valid mobile number and 6-digit OTP");
     }
     try {
-        const user = await verifyOtpService(mobile, role, hashOtp(otp));
+        const deviceRegistrationToken = crypto.randomBytes(32).toString("hex");
+        const deviceRegistrationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const user = await verifyOtpService(
+            mobile,
+            role,
+            hashOtp(otp),
+            hashOtp(deviceRegistrationToken),
+            deviceRegistrationExpiresAt
+        );
         if (!user) return sendResponse(res, 400, "Invalid or expired OTP");
-        return sendResponse(res, 200, "OTP verified successfully", user);
+        return sendResponse(res, 200, "OTP verified successfully", {
+            ...user,
+            deviceRegistrationToken,
+            deviceRegistrationExpiresAt,
+            deviceRegistrationEndpoint: "/api/devices",
+        });
     } catch (error) {
         return next(error);
     }
