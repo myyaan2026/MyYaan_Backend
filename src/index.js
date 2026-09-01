@@ -9,7 +9,7 @@ import errorHandling from "./middlewares/errorHandler.js";
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3001;
+//const port = process.env.PORT || 3001;
 
 //Middlewares
 app.use(express.json());
@@ -36,6 +36,7 @@ app.get("/", async(req, res) => {
 });
 
 //Server Running
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-});
+export default app;
+// app.listen(port, () => {
+//     console.log(`Server is running on http://localhost:${port}`);
+// });
