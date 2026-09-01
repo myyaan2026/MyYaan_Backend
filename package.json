@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon -L --watch src src/index.js",
+  "start": "node src/local.js",
+  "dev": "nodemon -L --watch src src/local.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
