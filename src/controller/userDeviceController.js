@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { upsertUserDevice } from "../models/userDeviceModel.js";
 import { sendResponse } from "../utils/response.js";
 
@@ -8,7 +7,7 @@ const DEVICE_TYPES = new Set(["android", "ios"]);
 const PUSH_PROVIDERS = new Set(["fcm", "apns", "other"]);
 
 export const saveUserDevice = async (req, res, next) => {
-    const userId = Number(req.body.userId);
+    const userId = req.auth.userId;
     const deviceToken = String(req.body.deviceToken ?? "").trim().toLowerCase();
     const deviceType = String(req.body.deviceType ?? "").trim().toLowerCase();
     const deviceName = String(req.body.deviceName ?? "").trim() || null;
@@ -17,16 +16,8 @@ export const saveUserDevice = async (req, res, next) => {
     const pushToken = String(req.body.pushToken ?? "").trim() || null;
     const pushProvider = String(req.body.pushProvider ?? "").trim().toLowerCase() || null;
     const notificationsEnabled = req.body.notificationsEnabled !== false;
-    const registrationToken = String(req.body.deviceRegistrationToken ?? "").trim();
-
-    if (!Number.isSafeInteger(userId) || userId < 1) {
-        return sendResponse(res, 400, "User ID must be a positive integer");
-    }
     if (!UUID_PATTERN.test(deviceToken)) {
         return sendResponse(res, 400, "Device token must be a valid installation UUID");
-    }
-    if (!/^[0-9a-f]{64}$/i.test(registrationToken)) {
-        return sendResponse(res, 400, "A valid device registration token is required");
     }
     if (!DEVICE_TYPES.has(deviceType)) {
         return sendResponse(res, 400, "Device type must be android or ios");
@@ -55,9 +46,7 @@ export const saveUserDevice = async (req, res, next) => {
             pushToken,
             pushProvider,
             notificationsEnabled,
-            registrationTokenHash: crypto.createHash("sha256").update(registrationToken).digest("hex"),
         });
-        if (!device) return sendResponse(res, 401, "Device registration token is invalid or expired");
         return sendResponse(res, 200, "User device information saved successfully", device);
     } catch (error) {
         return next(error);

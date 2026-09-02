@@ -5,11 +5,16 @@ import {
     verifyOtp as verifyOtpService,
 } from "../models/userModel.js";
 import { sendResponse } from "../utils/response.js";
+import { revokeAuthSession } from "../models/authModel.js";
 
 const OTP_EXPIRY_MINUTES = 5;
 const MOBILE_PATTERN = /^\d{7,15}$/;
 const normalizeMobile = (mobile) => String(mobile ?? "").replace(/[\s-]/g, "");
 const hashOtp = (otp) => crypto.createHash("sha256").update(otp).digest("hex");
+const configuredExpiryDays = Number(process.env.AUTH_TOKEN_EXPIRY_DAYS ?? 30);
+const AUTH_TOKEN_EXPIRY_DAYS = Number.isSafeInteger(configuredExpiryDays) && configuredExpiryDays > 0
+    ? configuredExpiryDays
+    : 30;
 
 const requestOtpForRole = (role) => async (req, res, next) => {
     const mobile = normalizeMobile(req.body.mobile);
@@ -42,21 +47,21 @@ const verifyOtpForRole = (role) => async (req, res, next) => {
         return sendResponse(res, 400, "Provide a valid mobile number and 6-digit OTP");
     }
     try {
-        const deviceRegistrationToken = crypto.randomBytes(32).toString("hex");
-        const deviceRegistrationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const authToken = crypto.randomBytes(32).toString("hex");
+        const authTokenExpiresAt = new Date(Date.now() + AUTH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
         const user = await verifyOtpService(
             mobile,
             role,
             hashOtp(otp),
-            hashOtp(deviceRegistrationToken),
-            deviceRegistrationExpiresAt
+            hashOtp(authToken),
+            authTokenExpiresAt
         );
         if (!user) return sendResponse(res, 400, "Invalid or expired OTP");
         return sendResponse(res, 200, "OTP verified successfully", {
             ...user,
-            deviceRegistrationToken,
-            deviceRegistrationExpiresAt,
-            deviceRegistrationEndpoint: "/api/devices",
+            authToken,
+            tokenType: "Bearer",
+            authTokenExpiresAt,
         });
     } catch (error) {
         return next(error);
@@ -71,16 +76,22 @@ export const verifyOtp = verifyOtpForRole("user");
 export const requestServicePartnerOtp = requestOtpForRole("service_partner");
 export const verifyServicePartnerOtp = verifyOtpForRole("service_partner");
 
-// GET /api/users/:id
+// GET /api/users
 export const getUserById = async (req, res, next) => {
-    const userId = Number(req.params.id);
-    if (!Number.isSafeInteger(userId) || userId < 1) {
-        return sendResponse(res, 400, "User ID must be a positive integer");
-    }
+    const userId = req.auth.userId;
     try {
         const user = await getUserByIdService(userId);
         if (!user) return sendResponse(res, 404, "User not found");
         return sendResponse(res, 200, "User fetched successfully", user);
+    } catch (error) {
+        return next(error);
+    }
+};
+
+export const logout = async (req, res, next) => {
+    try {
+        await revokeAuthSession(req.auth.sessionId, req.auth.userId);
+        return sendResponse(res, 200, "Logged out successfully");
     } catch (error) {
         return next(error);
     }

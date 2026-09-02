@@ -5,11 +5,18 @@ import pool from "../config/db.js";
 
 const migrationDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
 const migrations = [
-    "create_roles.sql",
-    "create_users.sql",
-    "create_otp_codes.sql",
-    "create_user_device_details.sql",
-    "create_app_update_config.sql",
+    "user_creation/create_roles.sql",
+    "user_creation/create_users.sql",
+    "user_creation/create_otp_codes.sql",
+    "user_creation/create_auth_sessions.sql",
+    "user_creation/remove_device_registration_tokens.sql",
+    "user_creation/create_user_device_details.sql",
+    "user_creation/create_app_update_config.sql",
+    "service_partner_creation/create_service_types.sql",
+    "service_partner_creation/create_service_partner_profiles.sql",
+    "service_partner_creation/alter_service_partner_profiles_for_steps.sql",
+    "service_partner_creation/use_numeric_service_ids.sql",
+    "profile_creation/create_normalized_profiles.sql",
 ];
 
 const run = async () => {
@@ -33,9 +40,10 @@ const run = async () => {
         }
 
         for (const migrationName of migrations) {
+            const legacyName = path.basename(migrationName);
             const completed = await client.query(
-                "SELECT 1 FROM schema_migrations WHERE migration_name = $1",
-                [migrationName]
+                "SELECT 1 FROM schema_migrations WHERE migration_name IN ($1, $2)",
+                [migrationName, legacyName]
             );
             if (completed.rowCount) {
                 console.log(`Skipped ${migrationName}`);

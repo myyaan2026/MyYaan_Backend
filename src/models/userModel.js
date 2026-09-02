@@ -3,9 +3,6 @@ import pool from "../config/db.js";
 const userSelect = `
     SELECT users.user_id AS "userId", users.mobile,
            roles.role_id AS "roleId", roles.code AS role,
-           users.email, users.name, users.service_center_name,
-           users.address_line_1, users.address_line_2, users.city,
-           users.pincode, users.latitude, users.longitude,
            users.is_verified AS "isVerified",
            users.is_login_enabled AS "isLoginEnable",
            users.is_profile_updated AS "isProfileUpdate",
@@ -79,17 +76,14 @@ export const verifyOtp = async (
     mobile,
     roleCode,
     otpHash,
-    deviceRegistrationTokenHash,
-    deviceRegistrationExpiresAt
+    authTokenHash,
+    authTokenExpiresAt
 ) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
         const otpResult = await client.query(
-            `UPDATE otp_codes AS otp SET
-                verified_at = CURRENT_TIMESTAMP,
-                device_registration_token_hash = $4,
-                device_registration_expires_at = $5
+            `UPDATE otp_codes AS otp SET verified_at = CURRENT_TIMESTAMP
              FROM users
              WHERE otp.user_id = users.user_id
                AND users.mobile = $1
@@ -98,7 +92,7 @@ export const verifyOtp = async (
                AND otp.otp_hash = $3 AND otp.verified_at IS NULL
                AND otp.expires_at > CURRENT_TIMESTAMP
              RETURNING users.user_id`,
-            [mobile, roleCode, otpHash, deviceRegistrationTokenHash, deviceRegistrationExpiresAt]
+            [mobile, roleCode, otpHash]
         );
         if (!otpResult.rows[0]) {
             await client.query("ROLLBACK");
@@ -110,6 +104,11 @@ export const verifyOtp = async (
                     updated_at = CURRENT_TIMESTAMP
              WHERE user_id = $1`,
             [otpResult.rows[0].user_id]
+        );
+        await client.query(
+            `INSERT INTO auth_sessions (user_id, token_hash, expires_at)
+             VALUES ($1, $2, $3)`,
+            [otpResult.rows[0].user_id, authTokenHash, authTokenExpiresAt]
         );
         const userResult = await client.query(
             `${userSelect} WHERE users.user_id = $1`,

@@ -4,6 +4,9 @@ import pool from "./config/db.js";
 
 import deviceRoutes from "./routes/deviceRoutes.js";
 import systemRoutes from "./routes/systemRoutes.js";
+import servicePartnerRoutes from "./routes/service_partner/servicePartnerRoutes.js";
+import userProfileRoutes from "./routes/profile/userProfileRoutes.js";
+import userAddressRoutes from "./routes/profile/userAddressRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
 
@@ -18,6 +21,9 @@ app.use(cors());
 app.use("/api", userRoutes);
 app.use("/api", deviceRoutes);
 app.use("/api", systemRoutes);
+app.use("/api", servicePartnerRoutes);
+app.use("/api", userProfileRoutes);
+app.use("/api", userAddressRoutes);
 app.get("/health", (req, res) => {
     res.status(200).json({ status: "ok" });
 });

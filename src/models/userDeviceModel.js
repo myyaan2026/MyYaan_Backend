@@ -10,26 +10,10 @@ export const upsertUserDevice = async ({
     pushToken,
     pushProvider,
     notificationsEnabled,
-    registrationTokenHash,
 }) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
-
-        const userResult = await client.query(
-            `SELECT users.user_id
-             FROM users JOIN otp_codes ON otp_codes.user_id = users.user_id
-             WHERE users.user_id = $1
-               AND users.is_verified = TRUE
-               AND otp_codes.device_registration_token_hash = $2
-               AND otp_codes.device_registration_expires_at > CURRENT_TIMESTAMP
-             FOR UPDATE`,
-            [userId, registrationTokenHash]
-        );
-        if (!userResult.rowCount) {
-            await client.query("ROLLBACK");
-            return null;
-        }
 
         if (pushToken) {
             await client.query(
@@ -75,12 +59,6 @@ export const upsertUserDevice = async ({
                 pushProvider,
                 notificationsEnabled,
             ]
-        );
-        await client.query(
-            `UPDATE otp_codes SET device_registration_token_hash = NULL,
-                                  device_registration_expires_at = NULL
-             WHERE user_id = $1`,
-            [userId]
         );
         await client.query("COMMIT");
         return result.rows[0];

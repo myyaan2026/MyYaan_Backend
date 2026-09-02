@@ -6,8 +6,6 @@ CREATE TABLE IF NOT EXISTS otp_codes (
     otp_hash VARCHAR(64) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
-    device_registration_token_hash VARCHAR(64),
-    device_registration_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT otp_codes_user_id_key UNIQUE (user_id)
 );
@@ -20,8 +18,6 @@ DO $$ BEGIN
 END $$;
 
 ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS role_id BIGINT;
-ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS device_registration_token_hash VARCHAR(64);
-ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS device_registration_expires_at TIMESTAMPTZ;
 UPDATE otp_codes SET role_id = 1 WHERE role_id IS NULL;
 ALTER TABLE otp_codes DROP CONSTRAINT IF EXISTS otp_codes_user_id_fkey;
 ALTER TABLE otp_codes DROP CONSTRAINT IF EXISTS otp_codes_role_id_fkey;

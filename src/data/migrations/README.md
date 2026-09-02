@@ -21,6 +21,6 @@ stored locally. It is not an IMEI and it is not a Firebase/APNs push token.
 - Send a changing Firebase/APNs token separately as `pushToken` with its
   `pushProvider` when push notifications are enabled.
 
-After OTP verification, call `PUT /api/devices` with the short-lived
-`deviceRegistrationToken` returned by the verification response.
-
+After OTP verification, store the returned `authToken` in iOS Keychain or
+Android secure storage. Send it to protected APIs as
+`Authorization: Bearer <authToken>`.
