@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import dotenv from "dotenv";
 import pool from "./config/db.js";
 
 import deviceRoutes from "./routes/deviceRoutes.js";
@@ -9,6 +10,8 @@ import userProfileRoutes from "./routes/profile/userProfileRoutes.js";
 import userAddressRoutes from "./routes/profile/userAddressRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
+
+dotenv.config();
 
 const app = express();
 //const port = process.env.PORT || 3001;
