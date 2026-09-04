@@ -1,7 +1,7 @@
 import {
-    createServiceCenter, getEnabledServices, getSelectedServices,
-    getServiceCenter, getServiceCenters, getServicePartnerOnboarding,
-    saveServiceOffers, updateServiceCenter,
+    createServiceCenter, getEnabledServices, getMyServiceCenter, getServicesForPartner,
+    getSelectedServices, getServiceCenter, getServiceCenters, getServicePartnerOnboarding,
+    saveMyServiceCenter, saveMyServiceOffers, saveServiceOffers, updateServiceCenter,
 } from "../../models/service_partner/servicePartnerModel.js";
 import { sendResponse } from "../../utils/response.js";
 
@@ -92,6 +92,23 @@ export const updateCenter = async (req,res,next) => {
     } catch(error){ return next(error); }
 };
 
+export const getMyServiceCenterAddress = async (req,res,next) => {
+    try {
+        const center=await getMyServiceCenter(req.auth.userId);
+        if(!center) return sendResponse(res,404,"Service centre address not found");
+        return sendResponse(res,200,"Service centre address fetched successfully",center);
+    } catch(error){ return next(error); }
+};
+
+export const updateMyServiceCenterAddress = async (req,res,next) => {
+    const details=parseCenter(req,false); const invalid=validateCenter(res,details,false); if(invalid) return invalid;
+    try {
+        const result=await saveMyServiceCenter(details);
+        if(result.status==="partner_not_found") return sendResponse(res,404,"Verified service partner not found");
+        return sendResponse(res,200,"Service centre address saved successfully",{serviceCenterId:result.serviceCenterId});
+    } catch(error){ return next(error); }
+};
+
 export const getCenterServices = async (req,res,next) => {
     const serviceCenterId=positiveId(req.query.serviceCenterId);
     if(!serviceCenterId) return sendResponse(res,400,"Service center ID query parameter is required");
@@ -109,5 +126,30 @@ export const updateServiceOffers = async (req,res,next) => {
         if(result.status==="center_not_found") return sendResponse(res,404,"Service centre not found");
         if(result.status==="invalid_services") return sendResponse(res,400,"One or more selected services are invalid or disabled");
         return sendResponse(res,200,"Details are filled successfully");
+    } catch(error){ return next(error); }
+};
+
+const parseServiceIds = (body) => [...new Set(Array.isArray(body.serviceIds)?body.serviceIds.map(Number):[])];
+
+export const getMyServices = async (req,res,next) => {
+    try {
+        return sendResponse(
+            res,
+            200,
+            "Service list fetched successfully",
+            await getServicesForPartner(req.auth.userId),
+        );
+    } catch(error){ return next(error); }
+};
+
+export const updateMyServices = async (req,res,next) => {
+    const serviceIds=parseServiceIds(req.body);
+    if(!serviceIds.length||serviceIds.some(id=>!Number.isSafeInteger(id)||id<1)) return sendResponse(res,400,"Select at least one valid service");
+    try {
+        const result=await saveMyServiceOffers({userId:req.auth.userId,serviceIds});
+        if(result.status==="center_not_found") return sendResponse(res,404,"Service centre details must be completed first");
+        if(result.status==="partner_not_found") return sendResponse(res,404,"Verified service partner not found");
+        if(result.status==="invalid_services") return sendResponse(res,400,"One or more selected services are invalid or disabled");
+        return sendResponse(res,200,"Services saved successfully");
     } catch(error){ return next(error); }
 };

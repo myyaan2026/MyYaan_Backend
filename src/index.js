@@ -8,6 +8,7 @@ import systemRoutes from "./routes/systemRoutes.js";
 import servicePartnerRoutes from "./routes/service_partner/servicePartnerRoutes.js";
 import userProfileRoutes from "./routes/profile/userProfileRoutes.js";
 import userAddressRoutes from "./routes/profile/userAddressRoutes.js";
+import servicePartnerProfileRoutes from "./routes/profile/service_partner_profile/servicePartnerProfileRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
 
@@ -27,6 +28,7 @@ app.use("/api", systemRoutes);
 app.use("/api", servicePartnerRoutes);
 app.use("/api", userProfileRoutes);
 app.use("/api", userAddressRoutes);
+app.use("/api", servicePartnerProfileRoutes);
 app.get("/health", (req, res) => {
     res.status(200).json({ status: "ok" });
 });

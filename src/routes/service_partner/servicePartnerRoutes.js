@@ -14,6 +14,6 @@ router.get("/service-partners/service-centres", listCenters);
 router.get("/service-partners/service-centre", getCenter);
 router.post("/service-partners/service-centres", createCenter);
 router.put("/service-partners/service-centres", updateCenter);
-router.get("/service-partners/services", getCenterServices);
-router.put("/service-partners/services", updateServiceOffers);
+router.get("/service-partners/service-centres/services", getCenterServices);
+router.put("/service-partners/service-centres/services", updateServiceOffers);
 export default router;

@@ -38,6 +38,7 @@ export const saveUserDevice = async (req, res, next) => {
     try {
         const device = await upsertUserDevice({
             userId,
+            sessionId: req.auth.sessionId,
             deviceToken,
             deviceType,
             deviceName,

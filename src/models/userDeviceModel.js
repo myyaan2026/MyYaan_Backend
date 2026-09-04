@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 
 export const upsertUserDevice = async ({
     userId,
+    sessionId,
     deviceToken,
     deviceType,
     deviceName,
@@ -14,6 +15,22 @@ export const upsertUserDevice = async ({
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
+
+        const existingDevice = await client.query(
+            `SELECT device_id, user_id FROM user_device_details
+             WHERE device_token = $1 FOR UPDATE`,
+            [deviceToken]
+        );
+
+        // If an app installation changes account, invalidate sessions belonging
+        // to the previous account on that installation.
+        if (existingDevice.rows[0] && Number(existingDevice.rows[0].user_id) !== userId) {
+            await client.query(
+                `UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+                 WHERE device_id = $1 AND revoked_at IS NULL`,
+                [existingDevice.rows[0].device_id]
+            );
+        }
 
         if (pushToken) {
             await client.query(
@@ -59,6 +76,19 @@ export const upsertUserDevice = async ({
                 pushProvider,
                 notificationsEnabled,
             ]
+        );
+
+        // Keep one current login session per installation while allowing the
+        // same user to remain logged in on any number of different devices.
+        await client.query(
+            `UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+             WHERE device_id = $1 AND session_id <> $2 AND revoked_at IS NULL`,
+            [result.rows[0].deviceId, sessionId]
+        );
+        await client.query(
+            `UPDATE auth_sessions SET device_id = $1
+             WHERE session_id = $2 AND user_id = $3 AND revoked_at IS NULL`,
+            [result.rows[0].deviceId, sessionId, userId]
         );
         await client.query("COMMIT");
         return result.rows[0];

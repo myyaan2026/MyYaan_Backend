@@ -1,6 +1,6 @@
 import pool from "../../config/db.js";
 
-const serviceSelect = `SELECT id::INTEGER AS "serviceId", service_code AS "serviceCode",
+const serviceSelect = `SELECT service_id::INTEGER AS "serviceId", service_code AS "serviceCode",
     service_name AS "serviceName", service_type AS "serviceType" FROM service_types`;
 const centerSelect = `SELECT service_center_id::INTEGER AS "serviceCenterId",
     service_center_name AS "serviceCenterName", service_center_pic_url AS "serviceCenterPicUrl",
@@ -10,7 +10,7 @@ const centerSelect = `SELECT service_center_id::INTEGER AS "serviceCenterId",
 
 export const getEnabledServices = async (serviceId = null) => {
     const result = await pool.query(
-        `${serviceSelect} WHERE is_enabled=TRUE AND ($1::int IS NULL OR id=$1)
+        `${serviceSelect} WHERE is_enabled=TRUE AND ($1::int IS NULL OR service_id=$1)
          ORDER BY service_type, service_name`,
         [serviceId]
     );
@@ -42,6 +42,15 @@ export const getServiceCenter = async (userId, serviceCenterId) => {
     const result = await pool.query(
         `${centerSelect} WHERE user_id=$1 AND service_center_id=$2 AND is_active=TRUE`,
         [userId, serviceCenterId]
+    );
+    return result.rows[0] ?? null;
+};
+
+export const getMyServiceCenter = async (userId) => {
+    const result = await pool.query(
+        `${centerSelect} WHERE user_id=$1 AND is_active=TRUE
+         ORDER BY created_at, service_center_id LIMIT 1`,
+        [userId]
     );
     return result.rows[0] ?? null;
 };
@@ -118,12 +127,68 @@ export const updateServiceCenter = (details) => withPartner(details.userId, asyn
     return result.rowCount ? { status: "saved" } : { status: "center_not_found" };
 });
 
+export const saveMyServiceCenter = (details) => withPartner(details.userId, async (client) => {
+    const existing = await client.query(
+        `SELECT service_center_id FROM service_centers
+         WHERE user_id=$1 AND is_active=TRUE
+         ORDER BY created_at, service_center_id LIMIT 1 FOR UPDATE`,
+        [details.userId]
+    );
+    if (!existing.rowCount) {
+        const created = await client.query(
+            `INSERT INTO service_centers (user_id,service_center_name,service_center_pic_url,
+                address_line_1,address_line_2,city,state,pincode,latitude,longitude)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             RETURNING service_center_id::INTEGER AS "serviceCenterId"`,
+            centerValues(details)
+        );
+        return { status: "created", ...created.rows[0] };
+    }
+    const serviceCenterId = Number(existing.rows[0].service_center_id);
+    await client.query(
+        `UPDATE service_centers SET service_center_name=$2,service_center_pic_url=$3,
+            address_line_1=$4,address_line_2=$5,city=$6,state=$7,pincode=$8,
+            latitude=$9,longitude=$10,updated_at=CURRENT_TIMESTAMP
+         WHERE user_id=$1 AND service_center_id=$11`,
+        [...centerValues(details), serviceCenterId]
+    );
+    return { status: "saved", serviceCenterId };
+});
+
 export const getSelectedServices = async (userId, serviceCenterId) => {
     const result = await pool.query(
-        `${serviceSelect} JOIN service_center_services mapping ON mapping.service_type_id=service_types.id
+        `${serviceSelect} JOIN service_center_services mapping ON mapping.service_type_id=service_types.service_id
          JOIN service_centers center ON center.service_center_id=mapping.service_center_id
          WHERE center.user_id=$1 AND center.service_center_id=$2 AND center.is_active=TRUE
          ORDER BY service_name`, [userId, serviceCenterId]
+    );
+    return result.rows;
+};
+
+export const getServicesForPartner = async (userId) => {
+    const result = await pool.query(
+        `WITH partner_center AS (
+            SELECT service_center_id
+            FROM service_centers
+            WHERE user_id=$1 AND is_active=TRUE
+            ORDER BY created_at, service_center_id
+            LIMIT 1
+         )
+         SELECT service_types.service_id::INTEGER AS "serviceId",
+                service_types.service_code AS "serviceCode",
+                service_types.service_name AS "serviceName",
+                service_types.service_type AS "serviceType",
+                EXISTS (
+                    SELECT 1
+                    FROM service_center_services mapping
+                    JOIN partner_center center
+                      ON center.service_center_id=mapping.service_center_id
+                    WHERE mapping.service_type_id=service_types.service_id
+                ) AS "isSelected"
+         FROM service_types
+         WHERE service_types.is_enabled=TRUE
+         ORDER BY service_types.service_type, service_types.service_name`,
+        [userId]
     );
     return result.rows;
 };
@@ -136,7 +201,7 @@ export const saveServiceOffers = ({ userId, serviceCenterId, serviceIds }) =>
         );
         if (!center.rowCount) return { status: "center_not_found" };
         const services = await client.query(
-            `SELECT id FROM service_types WHERE id=ANY($1::int[]) AND is_enabled=TRUE`, [serviceIds]
+            `SELECT service_id FROM service_types WHERE service_id=ANY($1::int[]) AND is_enabled=TRUE`, [serviceIds]
         );
         if (services.rowCount !== serviceIds.length) return { status: "invalid_services" };
         await client.query("DELETE FROM service_center_services WHERE service_center_id=$1", [serviceCenterId]);
@@ -146,3 +211,9 @@ export const saveServiceOffers = ({ userId, serviceCenterId, serviceIds }) =>
         );
         return { status: "saved" };
     });
+
+export const saveMyServiceOffers = async ({ userId, serviceIds }) => {
+    const center = await getMyServiceCenter(userId);
+    if (!center) return { status: "center_not_found" };
+    return saveServiceOffers({ userId, serviceCenterId: center.serviceCenterId, serviceIds });
+};

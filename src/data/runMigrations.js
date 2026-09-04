@@ -12,11 +12,13 @@ const migrations = [
     "user_creation/remove_device_registration_tokens.sql",
     "user_creation/create_user_device_details.sql",
     "user_creation/create_app_update_config.sql",
+    "user_creation/link_auth_sessions_to_devices.sql",
     "service_partner_creation/create_service_types.sql",
     "service_partner_creation/create_service_partner_profiles.sql",
     "service_partner_creation/alter_service_partner_profiles_for_steps.sql",
     "service_partner_creation/use_numeric_service_ids.sql",
     "profile_creation/create_normalized_profiles.sql",
+    "vehicle_catalog/create_vehicle_catalog.sql",
 ];
 
 const run = async () => {
