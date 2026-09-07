@@ -3,6 +3,12 @@ import cors from "cors";
 import dotenv from "dotenv";
 import pool from "./config/db.js";
 
+import deviceRoutes from "./routes/deviceRoutes.js";
+import systemRoutes from "./routes/systemRoutes.js";
+import servicePartnerRoutes from "./routes/service_partner/servicePartnerRoutes.js";
+import userProfileRoutes from "./routes/profile/userProfileRoutes.js";
+import userAddressRoutes from "./routes/profile/userAddressRoutes.js";
+import servicePartnerProfileRoutes from "./routes/profile/service_partner_profile/servicePartnerProfileRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
 
@@ -17,12 +23,15 @@ app.use(cors());
 
 //Routes
 app.use("/api", userRoutes);
+app.use("/api", deviceRoutes);
+app.use("/api", systemRoutes);
+app.use("/api", servicePartnerRoutes);
+app.use("/api", userProfileRoutes);
+app.use("/api", userAddressRoutes);
+app.use("/api", servicePartnerProfileRoutes);
 app.get("/health", (req, res) => {
     res.status(200).json({ status: "ok" });
 });
-
-//Error Handling middlewares
-app.use(errorHandling);
 
 //Testing Postgres Connection 
 app.get("/", async(req, res) => {
@@ -34,6 +43,9 @@ app.get("/", async(req, res) => {
         res.status(500).json({ error: "Unable to connect to the database" });
     }
 });
+
+// Error handling must be registered after every route.
+app.use(errorHandling);
 
 //Server Running
 export default app;

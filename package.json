@@ -2,11 +2,12 @@
   "name": "myyaan_backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
-  "start": "node src/local.js",
-  "dev": "nodemon -L --watch src src/local.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/local.js",
+    "dev": "nodemon -L --watch src src/local.js",
+    "db:migrate": "node src/data/runMigrations.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

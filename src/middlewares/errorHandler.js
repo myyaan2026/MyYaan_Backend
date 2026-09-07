@@ -1,11 +1,10 @@
-//Centralized error handling
-
 const errorHandling = (err, req, res, next) => {
-    console.log(err.stack);
+    console.error(err.stack);
     res.status(500).json({
         status: 500,
-        message: "Sonething went wrong",
-        error: err.message
+        message: "Something went wrong",
+        data: null,
+        ...(process.env.NODE_ENV !== "production" && { error: err.message }),
     });
 };
 
