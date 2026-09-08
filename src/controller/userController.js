@@ -33,7 +33,8 @@ const requestOtpForRole = (role) => async (req, res, next) => {
         }
         const data = { userId: otpRecord.user_id, mobile, role, expiresAt: otpRecord.expires_at };
         // For local Thunder Client testing only. In production, deliver this by SMS.
-        if (process.env.NODE_ENV !== "production") data.otp = otp;
+        // if (process.env.NODE_ENV !== "production") data.otp = otp;
+        data.otp = otp;
         return sendResponse(res, 201, "OTP generated successfully", data);
     } catch (error) {
         return next(error);

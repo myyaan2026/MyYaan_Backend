@@ -19,6 +19,7 @@ const migrations = [
     "service_partner_creation/use_numeric_service_ids.sql",
     "profile_creation/create_normalized_profiles.sql",
     "vehicle_catalog/create_vehicle_catalog.sql",
+    "vehicle_catalog/add_user_vehicle_details.sql",
 ];
 
 const run = async () => {

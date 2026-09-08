@@ -6,6 +6,8 @@ const userSelect = `
            users.is_verified AS "isVerified",
            users.is_login_enabled AS "isLoginEnable",
            users.is_profile_updated AS "isProfileUpdate",
+           EXISTS (SELECT 1 FROM user_vehicle_details vehicle
+                   WHERE vehicle.user_id = users.user_id) AS "isVehicleDetailsFilled",
            users.created_at, users.updated_at
     FROM users JOIN roles ON roles.role_id = users.role_id`;
 
