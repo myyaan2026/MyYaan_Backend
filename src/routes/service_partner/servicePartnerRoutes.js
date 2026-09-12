@@ -6,14 +6,15 @@ import {
 import { authenticate, requireRole } from "../../middlewares/auth.js";
 
 const router = express.Router();
-router.use(authenticate, requireRole("service_partner"));
-router.get("/services", listServices);
-router.get("/service", getServiceById);
-router.get("/service-partners/onboarding", getOnboarding);
-router.get("/service-partners/service-centres", listCenters);
-router.get("/service-partners/service-centre", getCenter);
-router.post("/service-partners/service-centres", createCenter);
-router.put("/service-partners/service-centres", updateCenter);
-router.get("/service-partners/service-centres/services", getCenterServices);
-router.put("/service-partners/service-centres/services", updateServiceOffers);
+const servicePartnerOnly = [authenticate, requireRole("service_partner")];
+
+router.get("/services", ...servicePartnerOnly, listServices);
+router.get("/service", ...servicePartnerOnly, getServiceById);
+router.get("/service-partners/onboarding", ...servicePartnerOnly, getOnboarding);
+router.get("/service-partners/service-centres", ...servicePartnerOnly, listCenters);
+router.get("/service-partners/service-centre", ...servicePartnerOnly, getCenter);
+router.post("/service-partners/service-centres", ...servicePartnerOnly, createCenter);
+router.put("/service-partners/service-centres", ...servicePartnerOnly, updateCenter);
+router.get("/service-partners/service-centres/services", ...servicePartnerOnly, getCenterServices);
+router.put("/service-partners/service-centres/services", ...servicePartnerOnly, updateServiceOffers);
 export default router;

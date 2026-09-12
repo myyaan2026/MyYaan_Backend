@@ -20,6 +20,7 @@ const migrations = [
     "profile_creation/create_normalized_profiles.sql",
     "vehicle_catalog/create_vehicle_catalog.sql",
     "vehicle_catalog/add_user_vehicle_details.sql",
+    "vehicle_catalog/support_multiple_user_vehicles_and_service_sub_types.sql",
 ];
 
 const run = async () => {
