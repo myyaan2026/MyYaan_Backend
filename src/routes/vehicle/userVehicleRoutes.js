@@ -2,7 +2,6 @@ import express from "express";
 import { authenticate, requireRole } from "../../middlewares/auth.js";
 import {
     addMyVehicle,
-    getBookingOptions,
     getMyVehicle,
     getVehicleTypes,
     listVehicleCompanies,
@@ -25,6 +24,5 @@ router.get("/users/vehicle-details/:vehicleId", ...customerOnly, getMyVehicle);
 router.put("/users/vehicle-details/:vehicleId", ...customerOnly, updateMyVehicle);
 router.patch("/users/vehicle-details/:vehicleId/primary", ...customerOnly, makeMyVehiclePrimary);
 router.delete("/users/vehicle-details/:vehicleId", ...customerOnly, removeMyVehicle);
-router.get("/users/service-booking-options", ...customerOnly, getBookingOptions);
 
 export default router;

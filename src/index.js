@@ -11,6 +11,10 @@ import userAddressRoutes from "./routes/profile/userAddressRoutes.js";
 import servicePartnerProfileRoutes from "./routes/profile/service_partner_profile/servicePartnerProfileRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import userVehicleRoutes from "./routes/vehicle/userVehicleRoutes.js";
+import homeServiceRoutes from "./routes/user/home/homeServiceRoutes.js";
+import serviceBookingRoutes from "./routes/user/service/booking/serviceBookingRoutes.js";
+import servicePartnerDiscoveryRoutes from "./routes/user/service/discovery/servicePartnerDiscoveryRoutes.js";
+import servicePartnerCapabilitiesRoutes from "./routes/service_partner/capabilities/servicePartnerCapabilitiesRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
 
 dotenv.config();
@@ -25,6 +29,10 @@ app.use(cors());
 //Routes
 app.use("/api", userRoutes);
 app.use("/api", userVehicleRoutes);
+app.use("/api", homeServiceRoutes);
+app.use("/api", serviceBookingRoutes);
+app.use("/api", servicePartnerDiscoveryRoutes);
+app.use("/api", servicePartnerCapabilitiesRoutes);
 app.use("/api", deviceRoutes);
 app.use("/api", systemRoutes);
 app.use("/api", servicePartnerRoutes);

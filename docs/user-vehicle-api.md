@@ -44,6 +44,22 @@ GET /api/users/service-booking-options?serviceId=2
 
 The response includes the primary vehicle, selected service, and only enabled sub-service types (Walk In Service, PickNDrop, Home Service). If no vehicle exists it responds with HTTP `409` and `data.code` equal to `VEHICLE_DETAILS_REQUIRED`.
 
+It also includes every enabled `serviceOption`, with `isDefaultSelected: true` on the option that should be selected first. For Bike/Car Service this is General Service; for Puncture and Running Repair it is the matching option.
+
+Each service option includes `tags` (for example, `Most Booked` or `Best Value`), `shortDescription`, `fullDescription`, `checklist` (a string array), `basePrice`, `estimatedDurationMinutes`, `warrantyDescription`, and `additionalChargeNote`. The puncture option includes the additional-tyre charge note.
+
+To book for a vehicle other than the primary one (for example, after the user selects Bike or Car), send its id too: `GET /api/users/service-booking-options?serviceId=6&vehicleId=12`. The response includes both `selectedVehicle` and the full `vehicles` list.
+
+The API derives Bike or Car from `vehicleId`; do not send a separate `vehicleType` query parameter. For shared services such as Puncture and Running Repair, it returns only the corresponding Bike or Car service-option cards and their complete checklists.
+
+## Home screen services
+
+```text
+GET /api/users/home/services
+```
+
+This returns enabled home-screen services, including Bike Service, Car Service, Bike Washing, Car Washing, Running Repair, and Puncture. These are managed with `service_types.is_home_enabled`; services and their options can be added or disabled in the database without changing the API.
+
 ## OTP response
 
 `POST /api/users/verify-otp` now includes `isVehicleDetailsFilled` in `data`. It is `false` until the user saves vehicle details and remains correct if the user updates them later.

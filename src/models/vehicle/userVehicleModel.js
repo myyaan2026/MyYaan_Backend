@@ -3,7 +3,6 @@ import pool from "../../config/db.js";
 const catalogForType = (type) => type.includes("BIKE")
     ? { companies: "bike_companies", companyId: "bike_company_id", models: "bike_models", modelId: "bike_model_id" }
     : { companies: "car_companies", companyId: "car_company_id", models: "car_models", modelId: "car_model_id" };
-const categoryForType = (type) => type.includes("BIKE") ? "BIKE" : "CAR";
 const vehicleFields = ({ vehicleType, companyId, modelId }) => vehicleType.includes("BIKE")
     ? [companyId, modelId, null, null] : [null, null, companyId, modelId];
 
@@ -48,9 +47,6 @@ export const getUserVehicles = async (userId) => (await pool.query(
 )).rows;
 export const getUserVehicleById = async (userId, vehicleId) => (await pool.query(
     `${vehicleSelect} WHERE detail.user_id=$1 AND detail.vehicle_id=$2`, [userId, vehicleId]
-)).rows[0] ?? null;
-const getPrimaryVehicle = async (userId) => (await pool.query(
-    `${vehicleSelect} WHERE detail.user_id=$1 AND detail.is_primary=TRUE`, [userId]
 )).rows[0] ?? null;
 
 const userAndCatalogAreValid = async (client, details) => {
@@ -127,17 +123,4 @@ export const deleteUserVehicle = async (userId, vehicleId) => {
             WHERE vehicle_id=(SELECT vehicle_id FROM user_vehicle_details WHERE user_id=$1 ORDER BY created_at,vehicle_id LIMIT 1)`, [userId]);
         await client.query("COMMIT"); return true;
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-};
-
-export const getBookingStartData = async (userId, serviceId) => {
-    const primaryVehicle = await getPrimaryVehicle(userId);
-    if (!primaryVehicle) return { status: "vehicle_required" };
-    const service = await pool.query(`SELECT service_id::INTEGER AS "serviceId",service_code AS "serviceCode",
-        service_name AS "serviceName",service_type AS "serviceType" FROM service_types
-        WHERE service_id=$1 AND is_enabled=TRUE AND vehicle_category=$2`, [serviceId, categoryForType(primaryVehicle.vehicleType)]);
-    if (!service.rowCount) return { status: "service_not_available" };
-    const subServices = await pool.query(`SELECT sub_service_id::INTEGER AS "subServiceId",sub_service_code AS "subServiceCode",
-        sub_service_name AS "subServiceName",sub_service_description AS "subServiceDescription",is_enabled AS "isEnabled"
-        FROM service_sub_types WHERE service_id=$1 AND is_enabled=TRUE ORDER BY sub_service_name`, [serviceId]);
-    return { status: "ok", primaryVehicle, service: service.rows[0], subServices: subServices.rows };
 };
