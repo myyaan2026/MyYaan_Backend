@@ -1,5 +1,5 @@
 import {
-    createUserVehicle, deleteUserVehicle, getBookingStartData, getUserVehicleById, getUserVehicles,
+    createUserVehicle, deleteUserVehicle, getUserVehicleById, getUserVehicles,
     getVehicleCompanies, getVehicleModels, setPrimaryUserVehicle, updateUserVehicle,
 } from "../../models/vehicle/userVehicleModel.js";
 import { sendResponse } from "../../utils/response.js";
@@ -80,14 +80,5 @@ export const removeMyVehicle = async (req, res, next) => {
     try {
         if (!(await deleteUserVehicle(req.auth.userId, vehicleId))) return sendResponse(res, 404, "Vehicle not found");
         return sendResponse(res, 200, "Vehicle deleted successfully");
-    } catch (error) { return next(error); }
-};
-export const getBookingOptions = async (req, res, next) => {
-    const serviceId = idOf(req.query.serviceId); if (!serviceId) return sendResponse(res, 400, "serviceId query parameter is required");
-    try {
-        const data = await getBookingStartData(req.auth.userId, serviceId);
-        if (data.status === "vehicle_required") return sendResponse(res, 409, "Please add a vehicle before booking a service", { code: "VEHICLE_DETAILS_REQUIRED" });
-        if (data.status === "service_not_available") return sendResponse(res, 400, "Selected service is disabled or is not available for the primary vehicle");
-        return sendResponse(res, 200, "Booking options fetched successfully", data);
     } catch (error) { return next(error); }
 };

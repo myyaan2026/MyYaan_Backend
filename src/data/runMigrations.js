@@ -21,6 +21,10 @@ const migrations = [
     "vehicle_catalog/create_vehicle_catalog.sql",
     "vehicle_catalog/add_user_vehicle_details.sql",
     "vehicle_catalog/support_multiple_user_vehicles_and_service_sub_types.sql",
+    "service_partner_creation/add_home_services_and_service_options.sql",
+    "service_partner_creation/add_service_option_display_details.sql",
+    "service_partner_creation/add_vehicle_category_to_service_options.sql",
+    "service_partner_creation/add_service_center_sub_service_support.sql",
 ];
 
 const run = async () => {
