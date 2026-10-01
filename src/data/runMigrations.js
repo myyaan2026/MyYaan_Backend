@@ -18,13 +18,12 @@ const migrations = [
     "service_partner_creation/alter_service_partner_profiles_for_steps.sql",
     "service_partner_creation/use_numeric_service_ids.sql",
     "profile_creation/create_normalized_profiles.sql",
-    "vehicle_catalog/create_vehicle_catalog.sql",
-    "vehicle_catalog/add_user_vehicle_details.sql",
-    "vehicle_catalog/support_multiple_user_vehicles_and_service_sub_types.sql",
     "service_partner_creation/add_home_services_and_service_options.sql",
     "service_partner_creation/add_service_option_display_details.sql",
     "service_partner_creation/add_vehicle_category_to_service_options.sql",
     "service_partner_creation/add_service_center_sub_service_support.sql",
+    "booking_and_coupons/create_coupons_and_bookings.sql",
+    "booking_and_coupons/add_service_center_pricing_and_history.sql",
 ];
 
 const run = async () => {

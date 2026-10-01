@@ -1,8 +1,29 @@
 import express from "express";
 import { authenticate, requireRole } from "../../../../middlewares/auth.js";
-import { getBookingOptions } from "../../../../controller/user/service/booking/serviceBookingController.js";
+import {
+    applyCoupon,
+    cancelBooking,
+    createBooking,
+    getAvailableSlots,
+    getBookingOptions,
+    getMyBooking,
+    listCoupons,
+    listMyBookings,
+    reviewBooking,
+} from "../../../../controller/user/service/booking/serviceBookingController.js";
 
 const router = express.Router();
-router.get("/users/service-booking-options", authenticate, requireRole("user"), getBookingOptions);
+const userOnly = [authenticate, requireRole("user")];
+
+router.get("/users/service-booking-options", ...userOnly, getBookingOptions);
+router.get("/users/bookings/available-slots", ...userOnly, getAvailableSlots);
+router.get("/users/coupons", ...userOnly, listCoupons);
+router.post("/users/coupons/apply", ...userOnly, applyCoupon);
+router.post("/users/bookings/review", ...userOnly, reviewBooking);
+router.post("/users/bookings", ...userOnly, createBooking);
+router.get("/users/bookings", ...userOnly, listMyBookings);
+router.get("/users/bookings/:bookingId", ...userOnly, getMyBooking);
+router.delete("/users/bookings/:bookingId", ...userOnly, cancelBooking);
+router.post("/users/bookings/:bookingId/cancel", ...userOnly, cancelBooking);
 
 export default router;

@@ -12,6 +12,9 @@ GET /api/users/vehicle-models?vehicleType=Bike&companyId=1
 
 `vehicleType` accepts `Bike`, `Electric Bike`, `Car`, and `Electric Car` (the API also accepts the corresponding uppercase codes). `companyId` is optional for `vehicle-models`; omit it to fetch every model for the selected vehicle type.
 
+- `GET /api/users/vehicle-companies` returns `companyId`, `companyName`, `companyShortName`, `companyLongName`, and `logoUrl`.
+- `GET /api/users/vehicle-models` returns `modelId`, `modelName`, `modelShortName`, `modelLongName`, `engineCc`, `imageUrl`, `companyId`, `companyName`, and `companyLogoUrl`.
+
 ## Manage the user's vehicles
 
 ```text

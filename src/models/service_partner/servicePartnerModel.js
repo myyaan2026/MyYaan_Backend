@@ -165,16 +165,18 @@ export const getSelectedServices = async (userId, serviceCenterId) => {
     return result.rows;
 };
 
-export const getServicesForPartner = async (userId) => {
+export const getServicesForPartner = async (userId, requestedServiceCenterId = null) => {
     const result = await pool.query(
         `WITH partner_center AS (
             SELECT service_center_id
             FROM service_centers
             WHERE user_id=$1 AND is_active=TRUE
+              AND ($2::bigint IS NULL OR service_center_id=$2)
             ORDER BY created_at, service_center_id
             LIMIT 1
          )
-         SELECT service_types.service_id::INTEGER AS "serviceId",
+         SELECT (SELECT service_center_id::INTEGER FROM partner_center) AS "serviceCenterId",
+                service_types.service_id::INTEGER AS "serviceId",
                 service_types.service_code AS "serviceCode",
                 service_types.service_name AS "serviceName",
                 service_types.service_type AS "serviceType",
@@ -184,11 +186,28 @@ export const getServicesForPartner = async (userId) => {
                     JOIN partner_center center
                       ON center.service_center_id=mapping.service_center_id
                     WHERE mapping.service_type_id=service_types.service_id
-                ) AS "isSelected"
+                ) AS "isSelected",
+                COALESCE((
+                    SELECT json_agg(json_build_object(
+                        'subServiceId', sub.sub_service_id,
+                        'subServiceCode', sub.sub_service_code,
+                        'subServiceName', sub.sub_service_name,
+                        'subServiceDescription', sub.sub_service_description,
+                        'isEnabled', sub.is_enabled,
+                        'isSelected', EXISTS (
+                            SELECT 1 FROM service_center_sub_services selected
+                            JOIN partner_center center ON center.service_center_id=selected.service_center_id
+                            WHERE selected.service_id=service_types.service_id
+                              AND selected.sub_service_id=sub.sub_service_id
+                        )
+                    ) ORDER BY sub.sub_service_name)
+                    FROM service_sub_types sub
+                    WHERE sub.service_id=service_types.service_id
+                ), '[]'::json) AS "subServices"
          FROM service_types
          WHERE service_types.is_enabled=TRUE
          ORDER BY service_types.service_type, service_types.service_name`,
-        [userId]
+        [userId, requestedServiceCenterId]
     );
     return result.rows;
 };
@@ -217,3 +236,120 @@ export const saveMyServiceOffers = async ({ userId, serviceIds }) => {
     if (!center) return { status: "center_not_found" };
     return saveServiceOffers({ userId, serviceCenterId: center.serviceCenterId, serviceIds });
 };
+
+// Stores every offered service together with the delivery modes offered for it.
+export const saveMyServiceConfigurations = async ({ userId, serviceCenterId, services }) =>
+    withPartner(userId, async (client) => {
+        const center = await client.query(
+            `SELECT 1 FROM service_centers WHERE user_id=$1 AND service_center_id=$2
+             AND is_active=TRUE FOR UPDATE`, [userId, serviceCenterId]
+        );
+        if (!center.rowCount) return { status: "center_not_found" };
+        const serviceIds = services.map((service) => service.serviceId);
+        const validServices = await client.query(
+            "SELECT service_id FROM service_types WHERE service_id=ANY($1::int[]) AND is_enabled=TRUE", [serviceIds]
+        );
+        if (validServices.rowCount !== services.length) return { status: "invalid_services" };
+        for (const service of services) {
+            const subServices = await client.query(
+                `SELECT sub_service_id FROM service_sub_types
+                 WHERE service_id=$1 AND is_enabled=TRUE AND sub_service_id=ANY($2::int[])`,
+                [service.serviceId, service.subServiceIds]
+            );
+            if (subServices.rowCount !== service.subServiceIds.length) return { status: "invalid_sub_services" };
+        }
+        await client.query("DELETE FROM service_center_services WHERE service_center_id=$1", [serviceCenterId]);
+        for (const service of services) {
+            await client.query(
+                "INSERT INTO service_center_services(service_center_id,service_type_id) VALUES ($1,$2)",
+                [serviceCenterId, service.serviceId]
+            );
+            await client.query(
+                `INSERT INTO service_center_sub_services(service_center_id,service_id,sub_service_id)
+                 SELECT $1,$2,unnest($3::int[])`,
+                [serviceCenterId, service.serviceId, service.subServiceIds]
+            );
+        }
+        return { status: "saved" };
+    });
+
+export const getServiceCenterPricing = async (userId, serviceCenterId, serviceId = null) => {
+    const center = await pool.query(
+        "SELECT 1 FROM service_centers WHERE user_id=$1 AND service_center_id=$2 AND is_active=TRUE",
+        [userId, serviceCenterId]
+    );
+    if (!center.rowCount) return { status: "center_not_found" };
+
+    const hasPricingTable = await pool.query(
+        "SELECT to_regclass('service_center_pricing') AS tbl"
+    ).then((r) => !!r.rows[0]?.tbl).catch(() => false);
+
+    if (!hasPricingTable) {
+        return { status: "ok", pricing: [] };
+    }
+
+    const query = `
+        SELECT pricing.service_center_id AS "serviceCenterId",
+               pricing.service_id AS "serviceId",
+               service.service_name AS "serviceName",
+               pricing.walk_in_price::NUMERIC(10,2) AS "walkInPrice",
+               pricing.pick_drop_charge::NUMERIC(10,2) AS "pickDropCharge",
+               pricing.home_service_price::NUMERIC(10,2) AS "homeServicePrice",
+               pricing.commission_amount::NUMERIC(10,2) AS "commissionAmount",
+               pricing.updated_at AS "updatedAt"
+        FROM service_center_pricing pricing
+        JOIN service_types service ON service.service_id = pricing.service_id
+        WHERE pricing.service_center_id = $1
+          AND ($2::bigint IS NULL OR pricing.service_id = $2)
+        ORDER BY service.service_name
+    `;
+    const result = await pool.query(query, [serviceCenterId, serviceId]);
+    return { status: "ok", pricing: result.rows };
+};
+
+export const saveServiceCenterPricing = async (userId, {
+    serviceCenterId,
+    serviceId,
+    walkInPrice = 200,
+    pickDropCharge = 200,
+    homeServicePrice = 500,
+    commissionAmount = 50,
+}) => withPartner(userId, async (client) => {
+    const center = await client.query(
+        "SELECT 1 FROM service_centers WHERE user_id=$1 AND service_center_id=$2 AND is_active=TRUE FOR UPDATE",
+        [userId, serviceCenterId]
+    );
+    if (!center.rowCount) return { status: "center_not_found" };
+    const service = await client.query(
+        "SELECT 1 FROM service_types WHERE service_id=$1 AND is_enabled=TRUE",
+        [serviceId]
+    );
+    if (!service.rowCount) return { status: "service_not_found" };
+
+    const query = `
+        INSERT INTO service_center_pricing
+            (service_center_id, service_id, walk_in_price, pick_drop_charge, home_service_price, commission_amount, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+        ON CONFLICT (service_center_id, service_id)
+        DO UPDATE SET
+            walk_in_price = EXCLUDED.walk_in_price,
+            pick_drop_charge = EXCLUDED.pick_drop_charge,
+            home_service_price = EXCLUDED.home_service_price,
+            commission_amount = EXCLUDED.commission_amount,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING service_center_id AS "serviceCenterId", service_id AS "serviceId",
+                  walk_in_price::NUMERIC(10,2) AS "walkInPrice",
+                  pick_drop_charge::NUMERIC(10,2) AS "pickDropCharge",
+                  home_service_price::NUMERIC(10,2) AS "homeServicePrice",
+                  commission_amount::NUMERIC(10,2) AS "commissionAmount"
+    `;
+    const result = await client.query(query, [
+        serviceCenterId,
+        serviceId,
+        walkInPrice,
+        pickDropCharge,
+        homeServicePrice,
+        commissionAmount,
+    ]);
+    return { status: "saved", pricing: result.rows[0] };
+});
