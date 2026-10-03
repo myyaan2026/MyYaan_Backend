@@ -23,7 +23,9 @@ router.post("/users/bookings/review", ...userOnly, reviewBooking);
 router.post("/users/bookings", ...userOnly, createBooking);
 router.get("/users/bookings", ...userOnly, listMyBookings);
 router.get("/users/bookings/:bookingId", ...userOnly, getMyBooking);
-router.delete("/users/bookings/:bookingId", ...userOnly, cancelBooking);
 router.post("/users/bookings/:bookingId/cancel", ...userOnly, cancelBooking);
+router.post("/users/bookings/cancel", ...userOnly, cancelBooking);
+router.patch("/users/bookings/:bookingId/cancel", ...userOnly, cancelBooking);
+router.patch("/users/bookings/cancel", ...userOnly, cancelBooking);
 
 export default router;

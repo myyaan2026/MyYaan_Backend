@@ -126,6 +126,7 @@ export const reviewBooking = async (req, res, next) => {
         if (data.status === "sub_service_not_available") return sendResponse(res, 400, "Selected delivery mode is not available");
         if (data.status === "service_option_not_available") return sendResponse(res, 400, "Selected service option is not available for this vehicle");
         if (data.status === "invalid_time_slot") return sendResponse(res, 400, "Invalid time slot format");
+        if (data.status === "invalid_coupon") return sendResponse(res, 400, data.message || "Invalid coupon code");
 
         return sendResponse(res, 200, "Booking review details fetched successfully", data);
     } catch (error) {
@@ -182,6 +183,7 @@ export const createBooking = async (req, res, next) => {
         if (result.status === "sub_service_not_available") return sendResponse(res, 400, "Selected delivery mode is not available");
         if (result.status === "service_option_not_available") return sendResponse(res, 400, "Selected service option is not available for this vehicle");
         if (result.status === "invalid_time_slot") return sendResponse(res, 400, "Invalid time slot format");
+        if (result.status === "invalid_coupon") return sendResponse(res, 400, result.message || "Invalid coupon code");
         if (result.status === "invalid_payment_mode") return sendResponse(res, 400, "paymentMode must be PAY_NOW or PAY_LATER");
         if (result.status === "slot_not_available") return sendResponse(res, 409, "Selected time slot is already fully booked. Please select another slot.");
 
@@ -192,8 +194,10 @@ export const createBooking = async (req, res, next) => {
 };
 
 export const cancelBooking = async (req, res, next) => {
-    const bookingId = positiveId(req.params.bookingId);
-    if (!bookingId) return sendResponse(res, 400, "Booking ID must be a positive integer");
+    const bookingId = positiveId(req.params.bookingId || req.query.bookingId || req.body?.bookingId);
+    if (!bookingId) {
+        return sendResponse(res, 400, "Booking ID must be a positive integer (pass via path parameter /bookings/:bookingId, query ?bookingId=, or JSON body)");
+    }
     const reason = req.body?.reason ? String(req.body.reason).trim() : "Cancelled by user";
     try {
         const result = await cancelUserBooking({
@@ -211,6 +215,10 @@ export const cancelBooking = async (req, res, next) => {
 };
 
 export const listMyBookings = async (req, res, next) => {
+    const specificBookingId = positiveId(req.query.bookingId);
+    if (specificBookingId) {
+        return getMyBooking(req, res, next);
+    }
     const type = req.query.type || req.query.tag || null;
     try {
         const data = await getUserBookings(req.auth.userId, type);
@@ -221,7 +229,7 @@ export const listMyBookings = async (req, res, next) => {
 };
 
 export const getMyBooking = async (req, res, next) => {
-    const bookingId = positiveId(req.params.bookingId);
+    const bookingId = positiveId(req.params.bookingId || req.query.bookingId);
     if (!bookingId) return sendResponse(res, 400, "Booking ID must be a positive integer");
     try {
         const booking = await getUserBookingById(req.auth.userId, bookingId);

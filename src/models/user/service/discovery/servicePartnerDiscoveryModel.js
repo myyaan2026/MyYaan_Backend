@@ -98,22 +98,6 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
     const optionResult = await pool.query(optionQuery, optionParams);
     const selectedOption = optionResult.rows[0] ?? null;
 
-    const hasPricingTable = await pool.query(
-        "SELECT to_regclass('service_center_pricing') AS tbl"
-    ).then((r) => !!r.rows[0]?.tbl).catch(() => false);
-
-    const pricingJoin = hasPricingTable
-        ? `LEFT JOIN service_center_pricing pricing
-             ON pricing.service_center_id = center.service_center_id AND pricing.service_id = $3`
-        : "";
-
-    const pricingCols = hasPricingTable
-        ? `pricing.walk_in_price AS "walkInPrice",
-           pricing.pick_drop_charge AS "pickDropCharge",
-           pricing.home_service_price AS "homeServicePrice",
-           pricing.commission_amount AS "commissionAmount",`
-        : `NULL AS "walkInPrice", NULL AS "pickDropCharge", NULL AS "homeServicePrice", NULL AS "commissionAmount",`;
-
     const supportTable = category === "BIKE" ? "service_center_bike_models" : "service_center_car_models";
     const modelColumn = category === "BIKE" ? "bike_model_id" : "car_model_id";
 
@@ -122,7 +106,10 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
             SELECT center.service_center_id, center.service_center_name, center.service_center_pic_url,
                    center.address_line_1, center.address_line_2, center.city, center.state, center.pincode,
                    center.latitude, center.longitude,
-                   ${pricingCols}
+                   cfg.default_price::NUMERIC(10,2) AS "walkInPrice",
+                   cfg.pick_n_drop_charge::NUMERIC(10,2) AS "pickDropCharge",
+                   cfg.home_service_charge::NUMERIC(10,2) AS "homeServicePrice",
+                   m.override_price::NUMERIC(10,2) AS "overridePrice",
                    6371 * acos(LEAST(1.0, GREATEST(-1.0,
                        cos(radians($1)) * cos(radians(center.latitude)) *
                        cos(radians(center.longitude) - radians($2)) +
@@ -134,7 +121,14 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
             JOIN service_center_sub_services delivery
               ON delivery.service_center_id=center.service_center_id
              AND delivery.service_id=$3 AND delivery.sub_service_id=$4
-            ${pricingJoin}
+            LEFT JOIN service_partner_price_configs cfg
+              ON cfg.service_center_id = center.service_center_id
+             AND cfg.service_id = $3
+             AND ($7::int IS NULL OR cfg.service_option_id = $7 OR cfg.service_option_id IS NULL)
+             AND (cfg.vehicle_category = $8 OR cfg.vehicle_category = 'ALL')
+            LEFT JOIN service_partner_price_models m
+              ON m.price_config_id = cfg.price_config_id
+             AND m.vehicle_model_id = $5
             WHERE center.is_active=TRUE AND center.latitude IS NOT NULL AND center.longitude IS NOT NULL
               AND (
                   NOT EXISTS (SELECT 1 FROM ${supportTable} configured
@@ -147,12 +141,37 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
          SELECT service_center_id::INTEGER AS "serviceCenterId", service_center_name AS "serviceCenterName",
                 service_center_pic_url AS "serviceCenterPicUrl", address_line_1, address_line_2,
                 city, state, pincode, latitude, longitude,
-                "walkInPrice", "pickDropCharge", "homeServicePrice", "commissionAmount",
+                "walkInPrice", "pickDropCharge", "homeServicePrice", "overridePrice",
                 ROUND(distance_km::numeric, 2) AS "distanceKm"
          FROM eligible_centers WHERE distance_km <= $6
          ORDER BY distance_km, service_center_name`,
-        [latitude, longitude, serviceId, subServiceId, vehicle.modelId, distanceKm]
+        [
+            latitude,
+            longitude,
+            serviceId,
+            subServiceId,
+            vehicle.modelId,
+            distanceKm,
+            selectedOption?.serviceOptionId ?? null,
+            category,
+        ]
     );
+
+    // Fetch commission rules
+    let commissionRuleMap = new Map();
+    try {
+        const commRes = await pool.query(
+            "SELECT * FROM commission_rules WHERE is_active = TRUE ORDER BY priority DESC, id DESC"
+        );
+        for (const row of commRes.rows) {
+            const key = row.service_center_id ? String(row.service_center_id) : "GLOBAL";
+            if (!commissionRuleMap.has(key)) {
+                commissionRuleMap.set(key, row);
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
 
     const defaultCommission = Number(process.env.COMMISSION_AMOUNT ?? 50);
 
@@ -160,17 +179,48 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
         const address = [row.address_line_1, row.address_line_2, row.city, row.state, row.pincode]
             .filter(Boolean).join(", ");
 
+        const activeRule = commissionRuleMap.get(String(row.serviceCenterId)) ?? commissionRuleMap.get("GLOBAL") ?? null;
+        let commAmount = defaultCommission;
+        const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
+
+        const customWalkIn = row.overridePrice !== null ? Number(row.overridePrice) : (row.walkInPrice !== null ? Number(row.walkInPrice) : null);
+
+        const priceBeforeComm = normType === "PICK_N_DROP"
+            ? (customWalkIn ?? Number(selectedOption?.basePrice ?? 200)) + (row.pickDropCharge !== null ? Number(row.pickDropCharge) : 200)
+            : normType === "HOME_SERVICE"
+                ? (row.homeServicePrice !== null ? Number(row.homeServicePrice) : 500)
+                : (customWalkIn ?? Number(selectedOption?.basePrice ?? 200));
+
+        if (activeRule) {
+            let cType = activeRule.commission_type;
+            let cVal = Number(activeRule.commission_value || 0);
+
+            if (normType === "PICK_N_DROP" && activeRule.pick_n_drop_commission_value !== null) {
+                cType = activeRule.pick_n_drop_commission_type || cType;
+                cVal = Number(activeRule.pick_n_drop_commission_value);
+            } else if (normType === "HOME_SERVICE" && activeRule.home_service_commission_value !== null) {
+                cType = activeRule.home_service_commission_type || cType;
+                cVal = Number(activeRule.home_service_commission_value);
+            }
+
+            if (String(cType).toUpperCase() === "PERCENTAGE") {
+                commAmount = Math.round(((priceBeforeComm * cVal) / 100) * 100) / 100;
+            } else {
+                commAmount = cVal;
+            }
+        }
+
         const priceCalc = calculateServicePrice({
             subServiceCode: subServiceInfo.sub_service_code,
             subServiceName: subServiceInfo.sub_service_name,
             customPricing: {
-                walkInPrice: row.walkInPrice,
+                walkInPrice: customWalkIn,
                 pickDropCharge: row.pickDropCharge,
                 homeServicePrice: row.homeServicePrice,
-                commissionAmount: row.commissionAmount,
+                commissionAmount: commAmount,
             },
             catalogBasePrice: selectedOption ? Number(selectedOption.basePrice) : 200,
-            platformCommission: defaultCommission,
+            platformCommission: commAmount,
         });
 
         return {

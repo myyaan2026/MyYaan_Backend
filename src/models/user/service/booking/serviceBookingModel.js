@@ -1,6 +1,6 @@
 import pool from "../../../../config/db.js";
 import { getUserVehicleById, getUserVehicles } from "../../../vehicle/userVehicleModel.js";
-import { calculateServicePrice } from "../discovery/servicePartnerDiscoveryModel.js";
+import { calculateServicePrice, normalizeSubServiceType } from "../discovery/servicePartnerDiscoveryModel.js";
 
 const categoryForVehicle = (vehicleType) => vehicleType.includes("BIKE") ? "BIKE" : "CAR";
 
@@ -111,9 +111,6 @@ export const getAvailableTimeSlots = async ({ serviceCenterId, date = null }) =>
     );
     if (!center.rowCount) return { status: "center_not_found" };
 
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    // Build the list of target dates: single date if passed, otherwise default to next 7 days (1 week)
     const targetDates = [];
     if (date) {
         targetDates.push(date);
@@ -141,7 +138,7 @@ export const getAvailableTimeSlots = async ({ serviceCenterId, date = null }) =>
             bookingsMap.set(row.booking_time_slot, Number(row.count));
         }
     } catch (e) {
-        // Table may be unmigrated in local test sandbox
+        // Table may be empty
     }
 
     const days = targetDates.map((dStr) => {
@@ -178,15 +175,23 @@ export const getAvailableTimeSlots = async ({ serviceCenterId, date = null }) =>
 
 export const getAvailableCoupons = async () => {
     const result = await pool.query(
-        `SELECT coupon_id AS "couponId", coupon_code AS "couponCode",
-                title, description, discount_type AS "discountType",
+        `SELECT id AS "couponId",
+                code AS "couponCode",
+                title,
+                description,
+                discount_type AS "discountType",
                 discount_value::NUMERIC(10,2) AS "discountValue",
-                min_order_amount::NUMERIC(10,2) AS "minOrderAmount",
+                min_order_value::NUMERIC(10,2) AS "minOrderAmount",
                 max_discount_amount::NUMERIC(10,2) AS "maxDiscountAmount",
-                valid_until AS "validUntil"
+                start_date AS "startDate",
+                end_date AS "validUntil",
+                applicable_vehicle_type AS "applicableVehicleType",
+                is_active AS "isActive"
          FROM coupons
-         WHERE is_active=TRUE AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
-         ORDER BY min_order_amount ASC, discount_value DESC`
+         WHERE is_active = TRUE
+           AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
+           AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)
+         ORDER BY min_order_value ASC, discount_value DESC`
     );
     return result.rows;
 };
@@ -234,14 +239,20 @@ export const applyCouponDiscount = async ({ couponCode, orderAmount }) => {
     }
 
     const couponResult = await pool.query(
-        `SELECT coupon_id AS "couponId", coupon_code AS "couponCode",
-                title, description, discount_type AS "discountType",
+        `SELECT id AS "couponId",
+                code AS "couponCode",
+                title,
+                description,
+                discount_type AS "discountType",
                 discount_value::NUMERIC(10,2) AS "discountValue",
-                min_order_amount::NUMERIC(10,2) AS "minOrderAmount",
+                min_order_value::NUMERIC(10,2) AS "minOrderAmount",
                 max_discount_amount::NUMERIC(10,2) AS "maxDiscountAmount",
-                valid_until AS "validUntil", is_active AS "isActive"
+                start_date AS "startDate",
+                end_date AS "validUntil",
+                applicable_vehicle_type AS "applicableVehicleType",
+                is_active AS "isActive"
          FROM coupons
-         WHERE UPPER(coupon_code)=$1`,
+         WHERE UPPER(code)=$1`,
         [cleanCode]
     );
 
@@ -253,7 +264,11 @@ export const applyCouponDiscount = async ({ couponCode, orderAmount }) => {
     if (!coupon.isActive) {
         return { isValid: false, message: "This coupon is no longer active" };
     }
-    if (coupon.validUntil && new Date(coupon.validUntil) < new Date()) {
+    const now = new Date();
+    if (coupon.startDate && new Date(coupon.startDate) > now) {
+        return { isValid: false, message: "This coupon is not active yet" };
+    }
+    if (coupon.validUntil && new Date(coupon.validUntil) < now) {
         return { isValid: false, message: "This coupon has expired" };
     }
 
@@ -271,6 +286,7 @@ export const applyCouponDiscount = async ({ couponCode, orderAmount }) => {
 
     return {
         isValid: true,
+        couponId: coupon.couponId,
         couponCode: coupon.couponCode,
         title: coupon.title,
         discountType: coupon.discountType,
@@ -318,6 +334,7 @@ export const reviewBookingData = async ({
         [subServiceId, serviceId]
     );
     if (!subRes.rowCount) return { status: "sub_service_not_available" };
+    const subServiceInfo = subRes.rows[0];
 
     const category = categoryForVehicle(vehicle.vehicleType);
     const optionRes = await pool.query(
@@ -331,44 +348,127 @@ export const reviewBookingData = async ({
     const matchedSlot = findMatchingSlot(bookingTimeSlot);
     if (!matchedSlot) return { status: "invalid_time_slot" };
 
-    const hasPricingTable = await pool.query(
-        "SELECT to_regclass('service_center_pricing') AS tbl"
-    ).then((r) => !!r.rows[0]?.tbl).catch(() => false);
-
-    let customPricing = null;
-    if (hasPricingTable) {
-        const pricingRes = await pool.query(
-            `SELECT walk_in_price AS "walkInPrice", pick_drop_charge AS "pickDropCharge",
-                    home_service_price AS "homeServicePrice", commission_amount AS "commissionAmount"
-             FROM service_center_pricing
-             WHERE service_center_id=$1 AND service_id=$2`,
-            [serviceCenterId, serviceId]
-        );
-        customPricing = pricingRes.rows[0] ?? null;
+    // Query custom pricing from service_partner_price_configs
+    let customWalkIn = null;
+    let customPickDrop = null;
+    let customHome = null;
+    try {
+        const query = `
+            SELECT 
+                cfg.default_price::NUMERIC(10,2) AS "walkInPrice",
+                cfg.pick_n_drop_charge::NUMERIC(10,2) AS "pickDropCharge",
+                cfg.home_service_charge::NUMERIC(10,2) AS "homeServicePrice",
+                m.override_price::NUMERIC(10,2) AS "overridePrice"
+            FROM service_partner_price_configs cfg
+            LEFT JOIN service_partner_price_models m
+              ON m.price_config_id = cfg.price_config_id
+             AND m.vehicle_model_id = $4
+            WHERE cfg.service_center_id = $1
+              AND cfg.service_id = $2
+              AND ($3::int IS NULL OR cfg.service_option_id = $3 OR cfg.service_option_id IS NULL)
+              AND (cfg.vehicle_category = $5 OR cfg.vehicle_category = 'ALL')
+            ORDER BY 
+              CASE WHEN m.override_price IS NOT NULL THEN 0 ELSE 1 END,
+              CASE WHEN cfg.service_option_id = $3 THEN 0 ELSE 1 END,
+              cfg.price_config_id DESC
+            LIMIT 1;
+        `;
+        const res = await pool.query(query, [
+            serviceCenterId,
+            serviceId,
+            serviceOptionId,
+            vehicle.modelId,
+            category,
+        ]);
+        if (res.rowCount) {
+            const row = res.rows[0];
+            customWalkIn = row.overridePrice !== null ? Number(row.overridePrice) : (row.walkInPrice !== null ? Number(row.walkInPrice) : null);
+            if (row.pickDropCharge !== null) customPickDrop = Number(row.pickDropCharge);
+            if (row.homeServicePrice !== null) customHome = Number(row.homeServicePrice);
+        }
+    } catch (e) {
+        // Fallback
     }
 
-    const defaultCommission = Number(process.env.COMMISSION_AMOUNT ?? 50);
+    const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
+    const walkInPrice = customWalkIn ?? Number(option.base_price || 200);
+    const pickDropCharge = customPickDrop ?? 200;
+    const homeServicePrice = customHome ?? 500;
+
+    const priceBeforeComm = normType === "PICK_N_DROP"
+        ? walkInPrice + pickDropCharge
+        : normType === "HOME_SERVICE"
+            ? homeServicePrice
+            : walkInPrice;
+
+    // Commission lookup from commission_rules
+    let commissionAmount = Number(process.env.COMMISSION_AMOUNT ?? 50);
+    try {
+        const commRes = await pool.query(`
+            SELECT commission_type, commission_value,
+                   pick_n_drop_commission_type, pick_n_drop_commission_value,
+                   home_service_commission_type, home_service_commission_value
+            FROM commission_rules
+            WHERE is_active = TRUE
+              AND ($1::bigint IS NULL OR service_center_id = $1 OR service_center_id IS NULL)
+            ORDER BY priority DESC, id DESC
+            LIMIT 1;
+        `, [serviceCenterId]);
+
+        if (commRes.rowCount) {
+            const rule = commRes.rows[0];
+            let cType = rule.commission_type;
+            let cVal = Number(rule.commission_value || 0);
+
+            if (normType === "PICK_N_DROP" && rule.pick_n_drop_commission_value !== null) {
+                cType = rule.pick_n_drop_commission_type || cType;
+                cVal = Number(rule.pick_n_drop_commission_value);
+            } else if (normType === "HOME_SERVICE" && rule.home_service_commission_value !== null) {
+                cType = rule.home_service_commission_type || cType;
+                cVal = Number(rule.home_service_commission_value);
+            }
+
+            if (String(cType).toUpperCase() === "PERCENTAGE") {
+                commissionAmount = Math.round(((priceBeforeComm * cVal) / 100) * 100) / 100;
+            } else {
+                commissionAmount = cVal;
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
 
     const priceCalc = calculateServicePrice({
-        subServiceCode: subRes.rows[0].sub_service_code,
-        subServiceName: subRes.rows[0].sub_service_name,
-        customPricing,
+        subServiceCode: subServiceInfo.sub_service_code,
+        subServiceName: subServiceInfo.sub_service_name,
+        customPricing: {
+            walkInPrice: customWalkIn,
+            pickDropCharge: customPickDrop,
+            homeServicePrice: customHome,
+            commissionAmount,
+        },
         catalogBasePrice: option.base_price,
-        platformCommission: defaultCommission,
+        platformCommission: commissionAmount,
     });
 
     const subtotal = priceCalc.finalPrice;
     let discountAmount = 0;
     let appliedCoupon = null;
 
-    if (couponCode) {
-        const couponCheck = await applyCouponDiscount({ couponCode, orderAmount: subtotal });
+    const cleanCoupon = String(couponCode ?? "").trim();
+    if (cleanCoupon) {
+        const couponCheck = await applyCouponDiscount({ couponCode: cleanCoupon, orderAmount: subtotal });
         if (couponCheck.isValid) {
             discountAmount = couponCheck.discountAmount;
             appliedCoupon = {
                 couponCode: couponCheck.couponCode,
                 title: couponCheck.title,
                 discountAmount: couponCheck.discountAmount,
+            };
+        } else {
+            return {
+                status: "invalid_coupon",
+                message: couponCheck.message || "Invalid or ineligible coupon code",
             };
         }
     }
@@ -458,17 +558,22 @@ export const createBookingEntry = async ({
     try {
         await client.query("BEGIN");
 
-        const slotLock = await client.query(
-            `SELECT COUNT(*)::int AS count
+        // Serialize booking creation per service center to prevent race conditions on time slots
+        await client.query(
+            `SELECT service_center_id FROM service_centers WHERE service_center_id=$1 FOR UPDATE`,
+            [serviceCenterId]
+        );
+
+        const slotBookings = await client.query(
+            `SELECT booking_id
              FROM service_bookings
              WHERE service_center_id=$1 AND booking_date=$2
                AND (booking_time_slot=$3 OR slot_start_time=$4)
-               AND booking_status NOT IN ('CANCELLED')
-             FOR UPDATE`,
+               AND booking_status NOT IN ('CANCELLED')`,
             [serviceCenterId, bookingDate, matchedSlot.display, matchedSlot.startTime]
         );
 
-        if (Number(slotLock.rows[0]?.count ?? 0) >= 2) {
+        if (slotBookings.rowCount >= 2) {
             await client.query("ROLLBACK");
             return { status: "slot_not_available" };
         }
@@ -480,11 +585,11 @@ export const createBookingEntry = async ({
         let couponId = null;
         if (review.pricing.coupon?.couponCode) {
             const couponRow = await client.query(
-                "SELECT coupon_id FROM coupons WHERE UPPER(coupon_code)=$1",
+                "SELECT id FROM coupons WHERE UPPER(code)=$1",
                 [review.pricing.coupon.couponCode.toUpperCase()]
             );
             if (couponRow.rowCount) {
-                couponId = couponRow.rows[0].coupon_id;
+                couponId = couponRow.rows[0].id;
             }
         }
 
@@ -621,11 +726,23 @@ export const cancelUserBooking = async ({ userId, bookingId, cancellationReason 
     }
 };
 
+const formatDateOnly = (d) => {
+    if (!d) return "";
+    if (typeof d === "string") return d.split("T")[0];
+    if (d instanceof Date) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+    }
+    return String(d);
+};
+
 const mapBookingRow = (row) => {
     const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
+    const todayStr = formatDateOnly(now);
     const currentTimeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:00`;
-    const bDate = row.bookingDate instanceof Date ? row.bookingDate.toISOString().split("T")[0] : String(row.bookingDate).split("T")[0];
+    const bDate = formatDateOnly(row.bookingDate);
 
     const isPast =
         ["COMPLETED", "CANCELLED"].includes(row.bookingStatus) ||
@@ -678,7 +795,7 @@ const mapBookingRow = (row) => {
 export const getUserBookings = async (userId, type = null) => {
     const result = await pool.query(
         `SELECT b.booking_id AS "bookingId", b.booking_number AS "bookingNumber",
-                b.booking_date AS "bookingDate", b.booking_time_slot AS "bookingTimeSlot",
+                TO_CHAR(b.booking_date, 'YYYY-MM-DD') AS "bookingDate", b.booking_time_slot AS "bookingTimeSlot",
                 b.slot_start_time AS "slotStartTime", b.slot_end_time AS "slotEndTime",
                 b.base_price AS "basePrice",
                 COALESCE(b.delivery_charge, 0) AS "deliveryCharge",
@@ -700,11 +817,11 @@ export const getUserBookings = async (userId, type = null) => {
          JOIN service_types s ON s.service_id=b.service_id
          JOIN service_sub_types sub ON sub.sub_service_id=b.sub_service_id
          JOIN service_options opt ON opt.service_option_id=b.service_option_id
-         LEFT JOIN user_vehicles uv ON uv.vehicle_id=b.vehicle_id
-         LEFT JOIN bike_companies bikeComp ON bikeComp.company_id=uv.company_id AND uv.vehicle_type LIKE '%BIKE%'
-         LEFT JOIN car_companies carComp ON carComp.company_id=uv.company_id AND uv.vehicle_type LIKE '%CAR%'
-         LEFT JOIN bike_models bikeMod ON bikeMod.model_id=uv.model_id AND uv.vehicle_type LIKE '%BIKE%'
-         LEFT JOIN car_models carMod ON carMod.model_id=uv.model_id AND uv.vehicle_type LIKE '%CAR%'
+         LEFT JOIN user_vehicle_details uv ON uv.vehicle_id=b.vehicle_id
+         LEFT JOIN bike_companies bikeComp ON bikeComp.bike_company_id=uv.bike_company_id
+         LEFT JOIN car_companies carComp ON carComp.car_company_id=uv.car_company_id
+         LEFT JOIN bike_models bikeMod ON bikeMod.bike_model_id=uv.bike_model_id
+         LEFT JOIN car_models carMod ON carMod.car_model_id=uv.car_model_id
          WHERE b.user_id=$1
          ORDER BY b.booking_date DESC, b.slot_start_time DESC, b.created_at DESC`,
         [userId]
@@ -734,7 +851,7 @@ export const getUserBookings = async (userId, type = null) => {
 export const getUserBookingById = async (userId, bookingId) => {
     const result = await pool.query(
         `SELECT b.booking_id AS "bookingId", b.booking_number AS "bookingNumber",
-                b.booking_date AS "bookingDate", b.booking_time_slot AS "bookingTimeSlot",
+                TO_CHAR(b.booking_date, 'YYYY-MM-DD') AS "bookingDate", b.booking_time_slot AS "bookingTimeSlot",
                 b.slot_start_time AS "slotStartTime", b.slot_end_time AS "slotEndTime",
                 b.base_price AS "basePrice",
                 COALESCE(b.delivery_charge, 0) AS "deliveryCharge",
@@ -756,11 +873,11 @@ export const getUserBookingById = async (userId, bookingId) => {
          JOIN service_types s ON s.service_id=b.service_id
          JOIN service_sub_types sub ON sub.sub_service_id=b.sub_service_id
          JOIN service_options opt ON opt.service_option_id=b.service_option_id
-         LEFT JOIN user_vehicles uv ON uv.vehicle_id=b.vehicle_id
-         LEFT JOIN bike_companies bikeComp ON bikeComp.company_id=uv.company_id AND uv.vehicle_type LIKE '%BIKE%'
-         LEFT JOIN car_companies carComp ON carComp.company_id=uv.company_id AND uv.vehicle_type LIKE '%CAR%'
-         LEFT JOIN bike_models bikeMod ON bikeMod.model_id=uv.model_id AND uv.vehicle_type LIKE '%BIKE%'
-         LEFT JOIN car_models carMod ON carMod.model_id=uv.model_id AND uv.vehicle_type LIKE '%CAR%'
+         LEFT JOIN user_vehicle_details uv ON uv.vehicle_id=b.vehicle_id
+         LEFT JOIN bike_companies bikeComp ON bikeComp.bike_company_id=uv.bike_company_id
+         LEFT JOIN car_companies carComp ON carComp.car_company_id=uv.car_company_id
+         LEFT JOIN bike_models bikeMod ON bikeMod.bike_model_id=uv.bike_model_id
+         LEFT JOIN car_models carMod ON carMod.car_model_id=uv.car_model_id
          WHERE b.user_id=$1 AND b.booking_id=$2`,
         [userId, bookingId]
     );
