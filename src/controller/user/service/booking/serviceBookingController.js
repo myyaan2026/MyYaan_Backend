@@ -5,10 +5,18 @@ import {
     getAvailableCoupons,
     getAvailableTimeSlots,
     getBookingStartData,
+    getServiceOptionsData,
     getUserBookingById,
     getUserBookings,
     reviewBookingData,
 } from "../../../../models/user/service/booking/serviceBookingModel.js";
+import { createRazorpayOrderForBooking } from "../../../../services/payment/razorpayService.js";
+import {
+    getPartnerDeviceTokens,
+    sendBookingNotificationToCustomer,
+    sendBookingNotificationToPartner,
+    sendMulticastNotification,
+} from "../../../../services/notification/firebaseNotificationService.js";
 import { sendResponse } from "../../../../utils/response.js";
 
 const positiveId = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
@@ -19,7 +27,31 @@ export const getBookingOptions = async (req, res, next) => {
     if (!serviceId) return sendResponse(res, 400, "serviceId query parameter is required");
     const vehicleId = req.query.vehicleId === undefined ? null : positiveId(req.query.vehicleId);
     if (req.query.vehicleId !== undefined && !vehicleId) return sendResponse(res, 400, "vehicleId must be a positive integer");
+    const subServiceId = req.query.subServiceId === undefined ? null : positiveId(req.query.subServiceId);
+    if (req.query.subServiceId !== undefined && !subServiceId) return sendResponse(res, 400, "subServiceId must be a positive integer");
+
     try {
+        if (subServiceId) {
+            const data = await getServiceOptionsData({
+                userId: req.auth.userId,
+                serviceId,
+                subServiceId,
+                vehicleId,
+            });
+            if (data.status === "vehicle_required") {
+                return sendResponse(res, 409, "Please add a vehicle before booking a service", { code: "VEHICLE_DETAILS_REQUIRED" });
+            }
+            if (data.status === "vehicle_not_found") return sendResponse(res, 404, "Selected vehicle not found");
+            if (data.status === "service_not_available") {
+                return sendResponse(res, 400, "Selected service is disabled or is not available for the selected vehicle");
+            }
+            if (data.status === "sub_service_not_available") {
+                return sendResponse(res, 400, "Selected delivery mode / sub-service is not available for this service");
+            }
+            const { status, ...resultData } = data;
+            return sendResponse(res, 200, "Service options fetched successfully", resultData);
+        }
+
         const data = await getBookingStartData(req.auth.userId, serviceId, vehicleId);
         if (data.status === "vehicle_required") {
             return sendResponse(res, 409, "Please add a vehicle before booking a service", { code: "VEHICLE_DETAILS_REQUIRED" });
@@ -28,7 +60,40 @@ export const getBookingOptions = async (req, res, next) => {
             return sendResponse(res, 400, "Selected service is disabled or is not available for the selected vehicle");
         }
         if (data.status === "vehicle_not_found") return sendResponse(res, 404, "Selected vehicle not found");
-        return sendResponse(res, 200, "Booking options fetched successfully", data);
+        const { status, ...resultData } = data;
+        return sendResponse(res, 200, "Booking options fetched successfully", resultData);
+    } catch (error) {
+        return next(error);
+    }
+};
+
+export const getServiceOptions = async (req, res, next) => {
+    const serviceId = positiveId(req.query.serviceId);
+    if (!serviceId) return sendResponse(res, 400, "serviceId query parameter is required");
+    const vehicleId = req.query.vehicleId === undefined ? null : positiveId(req.query.vehicleId);
+    if (req.query.vehicleId !== undefined && !vehicleId) return sendResponse(res, 400, "vehicleId must be a positive integer");
+    const subServiceId = req.query.subServiceId === undefined ? null : positiveId(req.query.subServiceId);
+    if (req.query.subServiceId !== undefined && !subServiceId) return sendResponse(res, 400, "subServiceId must be a positive integer");
+
+    try {
+        const data = await getServiceOptionsData({
+            userId: req.auth.userId,
+            serviceId,
+            subServiceId,
+            vehicleId,
+        });
+        if (data.status === "vehicle_required") {
+            return sendResponse(res, 409, "Please add a vehicle before booking a service", { code: "VEHICLE_DETAILS_REQUIRED" });
+        }
+        if (data.status === "vehicle_not_found") return sendResponse(res, 404, "Selected vehicle not found");
+        if (data.status === "service_not_available") {
+            return sendResponse(res, 400, "Selected service is disabled or is not available for the selected vehicle");
+        }
+        if (data.status === "sub_service_not_available") {
+            return sendResponse(res, 400, "Selected delivery mode / sub-service is not available for this service");
+        }
+        const { status, ...resultData } = data;
+        return sendResponse(res, 200, "Service options fetched successfully", resultData);
     } catch (error) {
         return next(error);
     }
@@ -187,7 +252,31 @@ export const createBooking = async (req, res, next) => {
         if (result.status === "invalid_payment_mode") return sendResponse(res, 400, "paymentMode must be PAY_NOW or PAY_LATER");
         if (result.status === "slot_not_available") return sendResponse(res, 409, "Selected time slot is already fully booked. Please select another slot.");
 
-        return sendResponse(res, 201, "Service booking created successfully", result.booking);
+        const booking = result.booking;
+
+        // If user chose PAY_NOW, automatically generate Razorpay order for instant checkout
+        if (booking.paymentMode === "PAY_NOW") {
+            const rzpRes = await createRazorpayOrderForBooking({
+                userId: req.auth.userId,
+                bookingId: booking.bookingId,
+            });
+            if (rzpRes.status === "ok") {
+                booking.razorpay = rzpRes.order;
+            }
+        } else {
+            // For PAY_LATER: booking is confirmed immediately, notify service partner and customer
+            sendBookingNotificationToPartner(booking).catch((err) =>
+                console.error("[Notification] Partner notification failed:", err)
+            );
+            sendBookingNotificationToCustomer({
+                userId: req.auth.userId,
+                bookingNumber: booking.bookingNumber,
+                title: "Booking Confirmed! 🚗",
+                body: `Your booking #${booking.bookingNumber} is confirmed for ${booking.bookingDate} (${booking.bookingTimeSlot}).`,
+            }).catch((err) => console.error("[Notification] Customer notification failed:", err));
+        }
+
+        return sendResponse(res, 201, "Service booking created successfully", booking);
     } catch (error) {
         return next(error);
     }
@@ -208,6 +297,26 @@ export const cancelBooking = async (req, res, next) => {
         if (result.status === "not_found") return sendResponse(res, 404, "Booking not found");
         if (result.status === "already_cancelled") return sendResponse(res, 400, "Booking is already cancelled");
         if (result.status === "cannot_cancel_completed") return sendResponse(res, 400, "Cannot cancel a completed service");
+
+        // Notify partner of cancellation asynchronously
+        if (result.serviceCenterId) {
+            getPartnerDeviceTokens(result.serviceCenterId).then((devices) => {
+                if (devices.length > 0) {
+                    const tokens = devices.map((d) => d.pushToken);
+                    sendMulticastNotification({
+                        tokens,
+                        title: "Booking Cancelled ⚠️",
+                        body: `Booking #${result.bookingNumber} was cancelled by the customer. Reason: ${reason}`,
+                        data: {
+                            type: "BOOKING_CANCELLED",
+                            bookingId: String(result.bookingId),
+                            bookingNumber: String(result.bookingNumber),
+                        },
+                    }).catch((e) => console.error("[Notification] Cancel partner notification error:", e));
+                }
+            }).catch((e) => console.error("[Notification] Fetch partner tokens error:", e));
+        }
+
         return sendResponse(res, 200, "Booking cancelled successfully", result);
     } catch (error) {
         return next(error);

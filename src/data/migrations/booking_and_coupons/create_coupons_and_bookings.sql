@@ -46,10 +46,10 @@ CREATE INDEX IF NOT EXISTS service_bookings_center_date_idx
 CREATE INDEX IF NOT EXISTS service_bookings_user_id_idx
     ON service_bookings (user_id, created_at DESC);
 
-INSERT INTO coupons (coupon_code, title, description, discount_type, discount_value, min_order_amount, max_discount_amount)
+INSERT INTO coupons (code, title, description, discount_type, discount_value, min_order_value, max_discount_amount)
 VALUES
     ('FIRST50', 'First Ride Special', '50% off up to ₹150 on your first booking', 'PERCENTAGE', 50.00, 299.00, 150.00),
     ('MYYAAN100', 'Flat ₹100 Off', 'Flat ₹100 discount on bookings above ₹499', 'FLAT', 100.00, 499.00, NULL),
     ('FESTIVE20', 'Festive Offer', '20% off up to ₹300 on bookings above ₹599', 'PERCENTAGE', 20.00, 599.00, 300.00),
     ('SAVE200', 'Mega Savings', 'Flat ₹200 discount on bookings above ₹999', 'FLAT', 200.00, 999.00, NULL)
-ON CONFLICT (coupon_code) DO NOTHING;
+ON CONFLICT (code) DO NOTHING;

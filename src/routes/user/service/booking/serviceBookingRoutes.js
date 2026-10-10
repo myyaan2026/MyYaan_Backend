@@ -7,6 +7,7 @@ import {
     getAvailableSlots,
     getBookingOptions,
     getMyBooking,
+    getServiceOptions,
     listCoupons,
     listMyBookings,
     reviewBooking,
@@ -16,6 +17,7 @@ const router = express.Router();
 const userOnly = [authenticate, requireRole("user")];
 
 router.get("/users/service-booking-options", ...userOnly, getBookingOptions);
+router.get("/users/service-options", ...userOnly, getServiceOptions);
 router.get("/users/bookings/available-slots", ...userOnly, getAvailableSlots);
 router.get("/users/coupons", ...userOnly, listCoupons);
 router.post("/users/coupons/apply", ...userOnly, applyCoupon);
