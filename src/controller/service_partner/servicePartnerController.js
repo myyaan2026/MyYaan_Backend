@@ -1,7 +1,8 @@
 import {
     createServiceCenter, getEnabledServices, getMyServiceCenter, getServicesForPartner,
     getSelectedServices, getServiceCenter, getServiceCenters, getServicePartnerOnboarding,
-    saveMyServiceCenter, saveMyServiceOffers, saveServiceOffers, updateServiceCenter,
+    getServiceCenterPricing, saveServiceCenterPricing,
+    saveMyServiceCenter, saveMyServiceConfigurations, saveMyServiceOffers, saveServiceOffers, updateServiceCenter,
 } from "../../models/service_partner/servicePartnerModel.js";
 import { sendResponse } from "../../utils/response.js";
 
@@ -132,24 +133,93 @@ export const updateServiceOffers = async (req,res,next) => {
 const parseServiceIds = (body) => [...new Set(Array.isArray(body.serviceIds)?body.serviceIds.map(Number):[])];
 
 export const getMyServices = async (req,res,next) => {
+    const serviceCenterId = req.query.serviceCenterId === undefined ? null : positiveId(req.query.serviceCenterId);
+    if (req.query.serviceCenterId !== undefined && !serviceCenterId) {
+        return sendResponse(res,400,"serviceCenterId must be a positive integer");
+    }
     try {
         return sendResponse(
             res,
             200,
             "Service list fetched successfully",
-            await getServicesForPartner(req.auth.userId),
+            await getServicesForPartner(req.auth.userId, serviceCenterId),
         );
     } catch(error){ return next(error); }
 };
 
 export const updateMyServices = async (req,res,next) => {
-    const serviceIds=parseServiceIds(req.body);
-    if(!serviceIds.length||serviceIds.some(id=>!Number.isSafeInteger(id)||id<1)) return sendResponse(res,400,"Select at least one valid service");
+    const serviceCenterId=positiveId(req.body.serviceCenterId);
+    const services=Array.isArray(req.body.services) ? req.body.services.map((service) => ({
+        serviceId: positiveId(service?.serviceId),
+        subServiceIds: [...new Set(Array.isArray(service?.subServiceIds) ? service.subServiceIds.map(positiveId) : [])],
+    })) : [];
+    if(!serviceCenterId) return sendResponse(res,400,"serviceCenterId must be a positive integer");
+    if(!services.length || services.some((service) => !service.serviceId || !service.subServiceIds.length || service.subServiceIds.some((subServiceId) => !subServiceId))) {
+        return sendResponse(res,400,"Provide at least one service with its selected subServiceIds");
+    }
+    if(new Set(services.map((service) => service.serviceId)).size !== services.length) {
+        return sendResponse(res,400,"Each serviceId must be included only once");
+    }
     try {
-        const result=await saveMyServiceOffers({userId:req.auth.userId,serviceIds});
+        const result=await saveMyServiceConfigurations({userId:req.auth.userId,serviceCenterId,services});
         if(result.status==="center_not_found") return sendResponse(res,404,"Service centre details must be completed first");
         if(result.status==="partner_not_found") return sendResponse(res,404,"Verified service partner not found");
         if(result.status==="invalid_services") return sendResponse(res,400,"One or more selected services are invalid or disabled");
+        if(result.status==="invalid_sub_services") return sendResponse(res,400,"One or more selected sub-services are invalid or disabled for its service");
         return sendResponse(res,200,"Services saved successfully");
     } catch(error){ return next(error); }
+};
+
+export const getCenterPricing = async (req, res, next) => {
+    const serviceCenterId = positiveId(req.query.serviceCenterId);
+    const serviceId = req.query.serviceId ? positiveId(req.query.serviceId) : null;
+    if (!serviceCenterId) return sendResponse(res, 400, "serviceCenterId query parameter is required and must be a positive integer");
+    try {
+        const result = await getServiceCenterPricing(req.auth.userId, serviceCenterId, serviceId);
+        if (result.status === "center_not_found") return sendResponse(res, 404, "Active service centre not found");
+        return sendResponse(res, 200, "Service centre pricing fetched successfully", result.pricing);
+    } catch (error) {
+        return next(error);
+    }
+};
+
+export const updateCenterPricing = async (req, res, next) => {
+    const serviceCenterId = positiveId(req.body.serviceCenterId);
+    const serviceId = positiveId(req.body.serviceId);
+    const walkInPrice = optionalNumber(req.body.walkInPrice);
+    const pickDropCharge = optionalNumber(req.body.pickDropCharge);
+    const homeServicePrice = optionalNumber(req.body.homeServicePrice);
+    const commissionAmount = optionalNumber(req.body.commissionAmount);
+
+    if (!serviceCenterId || !serviceId) {
+        return sendResponse(res, 400, "serviceCenterId and serviceId are required and must be positive integers");
+    }
+    if (walkInPrice !== null && (!Number.isFinite(walkInPrice) || walkInPrice < 0)) {
+        return sendResponse(res, 400, "walkInPrice must be a non-negative number");
+    }
+    if (pickDropCharge !== null && (!Number.isFinite(pickDropCharge) || pickDropCharge < 0)) {
+        return sendResponse(res, 400, "pickDropCharge must be a non-negative number");
+    }
+    if (homeServicePrice !== null && (!Number.isFinite(homeServicePrice) || homeServicePrice < 0)) {
+        return sendResponse(res, 400, "homeServicePrice must be a non-negative number");
+    }
+    if (commissionAmount !== null && (!Number.isFinite(commissionAmount) || commissionAmount < 0)) {
+        return sendResponse(res, 400, "commissionAmount must be a non-negative number");
+    }
+
+    try {
+        const result = await saveServiceCenterPricing(req.auth.userId, {
+            serviceCenterId,
+            serviceId,
+            walkInPrice: walkInPrice ?? 200,
+            pickDropCharge: pickDropCharge ?? 200,
+            homeServicePrice: homeServicePrice ?? 500,
+            commissionAmount: commissionAmount ?? 50,
+        });
+        if (result.status === "center_not_found") return sendResponse(res, 404, "Active service centre not found");
+        if (result.status === "service_not_found") return sendResponse(res, 404, "Selected service not found or disabled");
+        return sendResponse(res, 200, "Service centre pricing saved successfully", result.pricing);
+    } catch (error) {
+        return next(error);
+    }
 };
