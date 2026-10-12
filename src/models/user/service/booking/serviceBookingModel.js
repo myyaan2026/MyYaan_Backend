@@ -1,6 +1,7 @@
 import pool from "../../../../config/db.js";
 import { getUserVehicleById, getUserVehicles } from "../../../vehicle/userVehicleModel.js";
 import { calculateServicePrice, normalizeSubServiceType } from "../discovery/servicePartnerDiscoveryModel.js";
+import { getUserAddress, getUserPrimaryAddress } from "../../../profile/userAddressModel.js";
 
 const categoryForVehicle = (vehicleType) => vehicleType.includes("BIKE") ? "BIKE" : "CAR";
 
@@ -361,6 +362,7 @@ export const reviewBookingData = async ({
     bookingDate,
     bookingTimeSlot,
     couponCode = null,
+    addressId = null,
 }) => {
     const vehicle = await getUserVehicleById(userId, vehicleId);
     if (!vehicle) return { status: "vehicle_not_found" };
@@ -401,6 +403,23 @@ export const reviewBookingData = async ({
 
     const matchedSlot = findMatchingSlot(bookingTimeSlot);
     if (!matchedSlot) return { status: "invalid_time_slot" };
+
+    const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
+    let selectedAddress = null;
+    if (normType === "HOME_SERVICE" || normType === "PICK_N_DROP") {
+        if (addressId) {
+            selectedAddress = await getUserAddress(userId, addressId);
+            if (!selectedAddress) {
+                return { status: "address_not_found" };
+            }
+        } else {
+            selectedAddress = await getUserPrimaryAddress(userId);
+        }
+
+        if (!selectedAddress) {
+            return { status: "address_required" };
+        }
+    }
 
     // Query custom pricing from service_partner_price_configs
     let customWalkIn = null;
@@ -444,7 +463,6 @@ export const reviewBookingData = async ({
         // Fallback
     }
 
-    const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
     const walkInPrice = customWalkIn ?? Number(option.base_price || 200);
     const pickDropCharge = customPickDrop ?? 200;
     const homeServicePrice = customHome ?? 500;
@@ -573,6 +591,7 @@ export const reviewBookingData = async ({
             finalAmount,
         },
         paymentModes: ["PAY_NOW", "PAY_LATER"],
+        ...(selectedAddress ? { address: selectedAddress } : {}),
     };
 };
 
@@ -588,6 +607,7 @@ export const createBookingEntry = async ({
     paymentMode,
     couponCode = null,
     notes = null,
+    addressId = null,
 }) => {
     const review = await reviewBookingData({
         userId,
@@ -599,6 +619,7 @@ export const createBookingEntry = async ({
         bookingDate,
         bookingTimeSlot,
         couponCode,
+        addressId,
     });
     if (review.status !== "ok") return review;
 
@@ -653,9 +674,10 @@ export const createBookingEntry = async ({
                 service_id, sub_service_id, service_option_id,
                 booking_date, booking_time_slot, slot_start_time, slot_end_time,
                 base_price, delivery_charge, commission_amount, discount_amount, final_amount,
-                coupon_id, coupon_code, payment_mode, payment_status, booking_status, notes
+                coupon_id, coupon_code, payment_mode, payment_status, booking_status, notes,
+                address_id
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
             ) RETURNING booking_id, booking_number, created_at`,
             [
                 bookingNumber,
@@ -680,6 +702,7 @@ export const createBookingEntry = async ({
                 "PENDING",
                 mode === "PAY_NOW" ? "PENDING" : "CONFIRMED",
                 notes,
+                review.address?.addressId ?? null,
             ]
         );
 
@@ -721,6 +744,7 @@ export const createBookingEntry = async ({
                     couponCode: review.pricing.coupon?.couponCode ?? null,
                     finalAmount: review.pricing.finalAmount,
                 },
+                address: review.address ?? null,
                 paymentMode: mode,
                 paymentStatus: "PENDING",
                 bookingStatus: mode === "PAY_NOW" ? "PENDING" : "CONFIRMED",
@@ -841,6 +865,20 @@ const mapBookingRow = (row) => {
             couponCode: row.couponCode,
             finalAmount: Number(row.finalAmount || 0),
         },
+        address: row.deliveryAddressId ? {
+            addressId: Number(row.deliveryAddressId),
+            tag: row.deliveryTag,
+            tagDetails: row.deliveryTagDetails,
+            houseNumber: row.deliveryHouseNumber,
+            addressLine1: row.deliveryAddressLine1,
+            addressLine2: row.deliveryAddressLine2,
+            landmark: row.deliveryLandmark,
+            city: row.deliveryCity,
+            state: row.deliveryState,
+            pincode: row.deliveryPincode,
+            latitude: row.deliveryLatitude !== null ? Number(row.deliveryLatitude) : null,
+            longitude: row.deliveryLongitude !== null ? Number(row.deliveryLongitude) : null,
+        } : null,
         paymentMode: row.paymentMode,
         paymentStatus: row.paymentStatus,
         notes: row.notes,
@@ -867,7 +905,13 @@ export const getUserBookings = async (userId, type = null) => {
                 opt.service_option_name AS "serviceOptionName",
                 uv.vehicle_id AS "vehicleId", uv.vehicle_number AS "vehicleNumber",
                 COALESCE(bikeComp.company_name, carComp.company_name) AS "companyName",
-                COALESCE(bikeMod.model_name, carMod.model_name) AS "modelName"
+                COALESCE(bikeMod.model_name, carMod.model_name) AS "modelName",
+                addr.address_id AS "deliveryAddressId", addr.tag AS "deliveryTag",
+                addr.tag_details AS "deliveryTagDetails", addr.house_number AS "deliveryHouseNumber",
+                addr.address_line_1 AS "deliveryAddressLine1", addr.address_line_2 AS "deliveryAddressLine2",
+                addr.landmark AS "deliveryLandmark", addr.city AS "deliveryCity",
+                addr.state AS "deliveryState", addr.pincode AS "deliveryPincode",
+                addr.latitude AS "deliveryLatitude", addr.longitude AS "deliveryLongitude"
          FROM service_bookings b
          JOIN service_centers c ON c.service_center_id=b.service_center_id
          JOIN service_types s ON s.service_id=b.service_id
@@ -878,6 +922,7 @@ export const getUserBookings = async (userId, type = null) => {
          LEFT JOIN car_companies carComp ON carComp.car_company_id=uv.car_company_id
          LEFT JOIN bike_models bikeMod ON bikeMod.bike_model_id=uv.bike_model_id
          LEFT JOIN car_models carMod ON carMod.car_model_id=uv.car_model_id
+         LEFT JOIN user_addresses addr ON addr.address_id=b.address_id
          WHERE b.user_id=$1
          ORDER BY b.booking_date DESC, b.slot_start_time DESC, b.created_at DESC`,
         [userId]
@@ -923,7 +968,13 @@ export const getUserBookingById = async (userId, bookingId) => {
                 opt.service_option_name AS "serviceOptionName",
                 uv.vehicle_id AS "vehicleId", uv.vehicle_number AS "vehicleNumber",
                 COALESCE(bikeComp.company_name, carComp.company_name) AS "companyName",
-                COALESCE(bikeMod.model_name, carMod.model_name) AS "modelName"
+                COALESCE(bikeMod.model_name, carMod.model_name) AS "modelName",
+                addr.address_id AS "deliveryAddressId", addr.tag AS "deliveryTag",
+                addr.tag_details AS "deliveryTagDetails", addr.house_number AS "deliveryHouseNumber",
+                addr.address_line_1 AS "deliveryAddressLine1", addr.address_line_2 AS "deliveryAddressLine2",
+                addr.landmark AS "deliveryLandmark", addr.city AS "deliveryCity",
+                addr.state AS "deliveryState", addr.pincode AS "deliveryPincode",
+                addr.latitude AS "deliveryLatitude", addr.longitude AS "deliveryLongitude"
          FROM service_bookings b
          JOIN service_centers c ON c.service_center_id=b.service_center_id
          JOIN service_types s ON s.service_id=b.service_id
@@ -934,6 +985,7 @@ export const getUserBookingById = async (userId, bookingId) => {
          LEFT JOIN car_companies carComp ON carComp.car_company_id=uv.car_company_id
          LEFT JOIN bike_models bikeMod ON bikeMod.bike_model_id=uv.bike_model_id
          LEFT JOIN car_models carMod ON carMod.car_model_id=uv.car_model_id
+         LEFT JOIN user_addresses addr ON addr.address_id=b.address_id
          WHERE b.user_id=$1 AND b.booking_id=$2`,
         [userId, bookingId]
     );

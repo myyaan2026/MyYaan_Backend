@@ -31,6 +31,9 @@ const requestOtpForRole = (role) => async (req, res, next) => {
         if (otpRecord.isLoginDisabled) {
             return sendResponse(res, 403, "User account is disabled by admin. Please connect with the MyYaan team");
         }
+        if (otpRecord.isAccountDeleted) {
+            return sendResponse(res, 403, "This account has been permanently deleted");
+        }
         const data = { userId: otpRecord.user_id, mobile, role, expiresAt: otpRecord.expires_at };
         // For local Thunder Client testing only. In production, deliver this by SMS.
         // if (process.env.NODE_ENV !== "production") data.otp = otp;
