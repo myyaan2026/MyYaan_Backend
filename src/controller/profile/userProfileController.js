@@ -1,4 +1,8 @@
-import { getUserProfile, saveUserProfile } from "../../models/profile/userProfileModel.js";
+import {
+    getUserProfile,
+    requestAccountDeletion,
+    saveUserProfile,
+} from "../../models/profile/userProfileModel.js";
 import { sendResponse } from "../../utils/response.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,6 +42,21 @@ export const updateMyProfile = async (req, res, next) => {
             return sendResponse(res, 400, "Alternative mobile must differ from the registered mobile");
         }
         return sendResponse(res, 200, "Details are filled successfully");
+    } catch (error) {
+        return next(error);
+    }
+};
+
+export const deleteMyAccount = async (req, res, next) => {
+    try {
+        const result = await requestAccountDeletion(req.auth.userId);
+        if (!result) return sendResponse(res, 404, "User account not found or already disabled");
+        return sendResponse(
+            res,
+            200,
+            "We have received your account deletion request. Your account and related data will be permanently deleted within 30 days. If you log in again within 30 days, your deletion request will be cancelled automatically and your account will remain active.",
+            result
+        );
     } catch (error) {
         return next(error);
     }

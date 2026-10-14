@@ -1,5 +1,6 @@
 import pool from "../../../../config/db.js";
 import { getUserVehicleById } from "../../../vehicle/userVehicleModel.js";
+import { getUserAddress, getUserPrimaryAddress } from "../../../profile/userAddressModel.js";
 
 const categoryForVehicle = (vehicleType) => vehicleType.includes("BIKE") ? "BIKE" : "CAR";
 
@@ -62,7 +63,17 @@ export const calculateServicePrice = ({
     };
 };
 
-export const findAvailableServicePartners = async ({ userId, vehicleId, serviceId, subServiceId, serviceOptionId = null, latitude, longitude, distanceKm }) => {
+export const findAvailableServicePartners = async ({
+    userId,
+    vehicleId,
+    serviceId,
+    subServiceId,
+    serviceOptionId = null,
+    addressId = null,
+    latitude = null,
+    longitude = null,
+    distanceKm = 15,
+}) => {
     const vehicle = await getUserVehicleById(userId, vehicleId);
     if (!vehicle) return { status: "vehicle_not_found" };
     const category = categoryForVehicle(vehicle.vehicleType);
@@ -78,6 +89,47 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
     );
     if (!subServiceRes.rowCount) return { status: "sub_service_not_available" };
     const subServiceInfo = subServiceRes.rows[0];
+
+    const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
+    let selectedAddress = null;
+    let effectiveLat = latitude !== null ? Number(latitude) : null;
+    let effectiveLng = longitude !== null ? Number(longitude) : null;
+
+    if (normType === "HOME_SERVICE" || normType === "PICK_N_DROP") {
+        if (addressId) {
+            selectedAddress = await getUserAddress(userId, addressId);
+            if (!selectedAddress) return { status: "address_not_found" };
+            if (selectedAddress.latitude === null || selectedAddress.longitude === null) {
+                return { status: "address_invalid_coordinates" };
+            }
+            effectiveLat = Number(selectedAddress.latitude);
+            effectiveLng = Number(selectedAddress.longitude);
+        } else if (effectiveLat !== null && effectiveLng !== null) {
+            // Provided coordinates
+        } else {
+            selectedAddress = await getUserPrimaryAddress(userId);
+            if (!selectedAddress || selectedAddress.latitude === null || selectedAddress.longitude === null) {
+                return { status: "address_required" };
+            }
+            effectiveLat = Number(selectedAddress.latitude);
+            effectiveLng = Number(selectedAddress.longitude);
+        }
+    } else {
+        // WALK_IN
+        if (effectiveLat !== null && effectiveLng !== null) {
+            // Coordinates provided
+        } else if (addressId) {
+            selectedAddress = await getUserAddress(userId, addressId);
+            if (selectedAddress && selectedAddress.latitude !== null && selectedAddress.longitude !== null) {
+                effectiveLat = Number(selectedAddress.latitude);
+                effectiveLng = Number(selectedAddress.longitude);
+            } else {
+                return { status: "coordinates_required" };
+            }
+        } else {
+            return { status: "coordinates_required" };
+        }
+    }
 
     let optionQuery;
     let optionParams;
@@ -135,7 +187,7 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
                               WHERE configured.service_center_id=center.service_center_id AND configured.service_id=$3)
                   OR EXISTS (SELECT 1 FROM ${supportTable} supported
                              WHERE supported.service_center_id=center.service_center_id
-                               AND supported.service_id=$3 AND supported.${modelColumn}=$5)
+                                AND supported.service_id=$3 AND supported.${modelColumn}=$5)
               )
         )
          SELECT service_center_id::INTEGER AS "serviceCenterId", service_center_name AS "serviceCenterName",
@@ -146,8 +198,8 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
          FROM eligible_centers WHERE distance_km <= $6
          ORDER BY distance_km, service_center_name`,
         [
-            latitude,
-            longitude,
+            effectiveLat,
+            effectiveLng,
             serviceId,
             subServiceId,
             vehicle.modelId,
@@ -253,6 +305,7 @@ export const findAvailableServicePartners = async ({ userId, vehicleId, serviceI
             subServiceCode: subServiceInfo.sub_service_code,
             subServiceName: subServiceInfo.sub_service_name,
         },
+        selectedAddress: selectedAddress ?? null,
         partners,
     };
 };

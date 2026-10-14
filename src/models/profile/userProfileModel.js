@@ -88,3 +88,41 @@ export const saveUserProfile = async (details) => {
     }
 };
 
+export const requestAccountDeletion = async (userId) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const userRes = await client.query(
+            `UPDATE users
+             SET deletion_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = $1 AND is_login_enabled = TRUE
+             RETURNING user_id, deletion_requested_at`,
+            [userId]
+        );
+        if (!userRes.rowCount) {
+            await client.query("ROLLBACK");
+            return null;
+        }
+
+        // Revoke active sessions for security
+        await client.query(
+            "UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1",
+            [userId]
+        );
+
+        await client.query("COMMIT");
+        const requestedAt = new Date(userRes.rows[0].deletion_requested_at);
+        const scheduledDate = new Date(requestedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+        return {
+            deletionRequestedAt: requestedAt.toISOString(),
+            scheduledDeletionDate: scheduledDate.toISOString(),
+            gracePeriodDays: 30,
+        };
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+

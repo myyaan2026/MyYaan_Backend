@@ -27,11 +27,22 @@ export const createOtp = async (mobile, roleCode, otpHash, expiresAt) => {
         // role check remain reliable under concurrent requests.
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [mobile]);
         let userResult = await client.query(
-            `SELECT user_id, role_id, is_login_enabled
+            `SELECT user_id, role_id, is_login_enabled, deletion_requested_at
              FROM users WHERE mobile = $1 FOR UPDATE`,
             [mobile]
         );
         let user = userResult.rows[0];
+
+        if (user && user.deletion_requested_at) {
+            const expiredCheck = await client.query(
+                "SELECT $1::timestamptz <= NOW() - INTERVAL '30 days' AS is_expired",
+                [user.deletion_requested_at]
+            );
+            if (expiredCheck.rows[0].is_expired) {
+                await client.query("ROLLBACK");
+                return { isAccountDeleted: true };
+            }
+        }
 
         if (user && Number(user.role_id) !== Number(roleId)) {
             await client.query("ROLLBACK");
@@ -103,6 +114,7 @@ export const verifyOtp = async (
 
         await client.query(
             `UPDATE users SET is_verified = TRUE, is_mobile_verified = TRUE,
+                    deletion_requested_at = NULL,
                     updated_at = CURRENT_TIMESTAMP
              WHERE user_id = $1`,
             [otpResult.rows[0].user_id]

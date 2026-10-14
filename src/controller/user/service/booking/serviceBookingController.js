@@ -156,6 +156,7 @@ export const reviewBooking = async (req, res, next) => {
         bookingDate,
         bookingTimeSlot,
         couponCode,
+        addressId,
     } = req.body || {};
 
     const centerId = positiveId(serviceCenterId);
@@ -163,6 +164,7 @@ export const reviewBooking = async (req, res, next) => {
     const sId = positiveId(serviceId);
     const subId = positiveId(subServiceId);
     const optId = positiveId(serviceOptionId);
+    const addrId = addressId !== undefined && addressId !== null ? positiveId(addressId) : null;
 
     if (!centerId || !vId || !sId || !subId || !optId || !isValidDate(bookingDate) || !bookingTimeSlot) {
         return sendResponse(
@@ -170,6 +172,9 @@ export const reviewBooking = async (req, res, next) => {
             400,
             "Provide positive serviceCenterId, vehicleId, serviceId, subServiceId, serviceOptionId, valid bookingDate, and bookingTimeSlot"
         );
+    }
+    if (addressId !== undefined && addressId !== null && !addrId) {
+        return sendResponse(res, 400, "addressId must be a positive integer");
     }
 
     try {
@@ -183,6 +188,7 @@ export const reviewBooking = async (req, res, next) => {
             bookingDate,
             bookingTimeSlot,
             couponCode,
+            addressId: addrId,
         });
 
         if (data.status === "vehicle_not_found") return sendResponse(res, 404, "Selected vehicle not found");
@@ -191,9 +197,12 @@ export const reviewBooking = async (req, res, next) => {
         if (data.status === "sub_service_not_available") return sendResponse(res, 400, "Selected delivery mode is not available");
         if (data.status === "service_option_not_available") return sendResponse(res, 400, "Selected service option is not available for this vehicle");
         if (data.status === "invalid_time_slot") return sendResponse(res, 400, "Invalid time slot format");
+        if (data.status === "address_not_found") return sendResponse(res, 404, "Selected address not found");
+        if (data.status === "address_required") return sendResponse(res, 400, "Please select an address for Home Service / Pick & Drop service");
         if (data.status === "invalid_coupon") return sendResponse(res, 400, data.message || "Invalid coupon code");
 
-        return sendResponse(res, 200, "Booking review details fetched successfully", data);
+        const { status, ...resultData } = data;
+        return sendResponse(res, 200, "Booking review details fetched successfully", resultData);
     } catch (error) {
         return next(error);
     }
@@ -211,6 +220,7 @@ export const createBooking = async (req, res, next) => {
         paymentMode,
         couponCode,
         notes,
+        addressId,
     } = req.body || {};
 
     const centerId = positiveId(serviceCenterId);
@@ -218,6 +228,7 @@ export const createBooking = async (req, res, next) => {
     const sId = positiveId(serviceId);
     const subId = positiveId(subServiceId);
     const optId = positiveId(serviceOptionId);
+    const addrId = addressId !== undefined && addressId !== null ? positiveId(addressId) : null;
 
     if (!centerId || !vId || !sId || !subId || !optId || !isValidDate(bookingDate) || !bookingTimeSlot || !paymentMode) {
         return sendResponse(
@@ -225,6 +236,9 @@ export const createBooking = async (req, res, next) => {
             400,
             "Provide positive serviceCenterId, vehicleId, serviceId, subServiceId, serviceOptionId, valid bookingDate, bookingTimeSlot, and paymentMode (PAY_NOW or PAY_LATER)"
         );
+    }
+    if (addressId !== undefined && addressId !== null && !addrId) {
+        return sendResponse(res, 400, "addressId must be a positive integer");
     }
 
     try {
@@ -240,6 +254,7 @@ export const createBooking = async (req, res, next) => {
             paymentMode,
             couponCode,
             notes,
+            addressId: addrId,
         });
 
         if (result.status === "vehicle_not_found") return sendResponse(res, 404, "Selected vehicle not found");
@@ -248,6 +263,8 @@ export const createBooking = async (req, res, next) => {
         if (result.status === "sub_service_not_available") return sendResponse(res, 400, "Selected delivery mode is not available");
         if (result.status === "service_option_not_available") return sendResponse(res, 400, "Selected service option is not available for this vehicle");
         if (result.status === "invalid_time_slot") return sendResponse(res, 400, "Invalid time slot format");
+        if (result.status === "address_not_found") return sendResponse(res, 404, "Selected address not found");
+        if (result.status === "address_required") return sendResponse(res, 400, "Please select an address for Home Service / Pick & Drop service");
         if (result.status === "invalid_coupon") return sendResponse(res, 400, result.message || "Invalid coupon code");
         if (result.status === "invalid_payment_mode") return sendResponse(res, 400, "paymentMode must be PAY_NOW or PAY_LATER");
         if (result.status === "slot_not_available") return sendResponse(res, 409, "Selected time slot is already fully booked. Please select another slot.");
