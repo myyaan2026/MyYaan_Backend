@@ -90,26 +90,89 @@ export const verifyOtp = async (
     roleCode,
     otpHash,
     authTokenHash,
-    authTokenExpiresAt
+    authTokenExpiresAt,
+    isMasterOtp = false
 ) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
-        const otpResult = await client.query(
-            `UPDATE otp_codes AS otp SET verified_at = CURRENT_TIMESTAMP
-             FROM users
-             WHERE otp.user_id = users.user_id
-               AND users.mobile = $1
-               AND users.role_id = (SELECT role_id FROM roles WHERE code = $2)
-               AND users.is_login_enabled = TRUE
-               AND otp.otp_hash = $3 AND otp.verified_at IS NULL
-               AND otp.expires_at > CURRENT_TIMESTAMP
-             RETURNING users.user_id`,
-            [mobile, roleCode, otpHash]
-        );
-        if (!otpResult.rows[0]) {
-            await client.query("ROLLBACK");
-            return null;
+        let userId;
+
+        if (isMasterOtp) {
+            const roleResult = await client.query(
+                "SELECT role_id FROM roles WHERE code = $1",
+                [roleCode]
+            );
+            if (!roleResult.rows[0]) {
+                await client.query("ROLLBACK");
+                throw new Error(`Role '${roleCode}' is not configured`);
+            }
+            const roleId = roleResult.rows[0].role_id;
+
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [mobile]);
+
+            const userLookup = await client.query(
+                `SELECT user_id, role_id, is_login_enabled, deletion_requested_at
+                 FROM users
+                 WHERE mobile = $1 FOR UPDATE`,
+                [mobile]
+            );
+
+            if (userLookup.rows[0]) {
+                const existingUser = userLookup.rows[0];
+                if (Number(existingUser.role_id) !== Number(roleId)) {
+                    await client.query("ROLLBACK");
+                    return { roleConflict: true };
+                }
+                if (!existingUser.is_login_enabled) {
+                    await client.query("ROLLBACK");
+                    return { isLoginDisabled: true };
+                }
+                if (existingUser.deletion_requested_at) {
+                    const expiredCheck = await client.query(
+                        "SELECT $1::timestamptz <= NOW() - INTERVAL '30 days' AS is_expired",
+                        [existingUser.deletion_requested_at]
+                    );
+                    if (expiredCheck.rows[0].is_expired) {
+                        await client.query("ROLLBACK");
+                        return { isAccountDeleted: true };
+                    }
+                }
+                userId = existingUser.user_id;
+            } else {
+                const newInsert = await client.query(
+                    `INSERT INTO users (mobile, role_id)
+                     VALUES ($1, $2)
+                     RETURNING user_id, is_login_enabled`,
+                    [mobile, roleId]
+                );
+                userId = newInsert.rows[0].user_id;
+            }
+
+            // Mark any pending unverified OTPs as verified
+            await client.query(
+                `UPDATE otp_codes SET verified_at = CURRENT_TIMESTAMP
+                 WHERE user_id = $1 AND verified_at IS NULL`,
+                [userId]
+            );
+        } else {
+            const otpResult = await client.query(
+                `UPDATE otp_codes AS otp SET verified_at = CURRENT_TIMESTAMP
+                 FROM users
+                 WHERE otp.user_id = users.user_id
+                   AND users.mobile = $1
+                   AND users.role_id = (SELECT role_id FROM roles WHERE code = $2)
+                   AND users.is_login_enabled = TRUE
+                   AND otp.otp_hash = $3 AND otp.verified_at IS NULL
+                   AND otp.expires_at > CURRENT_TIMESTAMP
+                 RETURNING users.user_id`,
+                [mobile, roleCode, otpHash]
+            );
+            if (!otpResult.rows[0]) {
+                await client.query("ROLLBACK");
+                return null;
+            }
+            userId = otpResult.rows[0].user_id;
         }
 
         await client.query(
@@ -117,16 +180,16 @@ export const verifyOtp = async (
                     deletion_requested_at = NULL,
                     updated_at = CURRENT_TIMESTAMP
              WHERE user_id = $1`,
-            [otpResult.rows[0].user_id]
+            [userId]
         );
         await client.query(
             `INSERT INTO auth_sessions (user_id, token_hash, expires_at)
              VALUES ($1, $2, $3)`,
-            [otpResult.rows[0].user_id, authTokenHash, authTokenExpiresAt]
+            [userId, authTokenHash, authTokenExpiresAt]
         );
         const userResult = await client.query(
             `${userSelect} WHERE users.user_id = $1`,
-            [otpResult.rows[0].user_id]
+            [userId]
         );
         await client.query("COMMIT");
         return userResult.rows[0];
