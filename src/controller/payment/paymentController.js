@@ -13,7 +13,7 @@ const positiveId = (val) => (Number.isSafeInteger(Number(val)) && Number(val) > 
  * Create a new Razorpay order for an existing booking.
  */
 export const createPaymentOrder = async (req, res, next) => {
-    const bookingId = positiveId(req.body?.bookingId || req.query?.bookingId);
+    const bookingId = positiveId(req.body?.bookingId || req.body?.booking_id || req.query?.bookingId || req.query?.booking_id);
     if (!bookingId) {
         return sendResponse(res, 400, "bookingId is required and must be a positive integer");
     }
@@ -51,7 +51,9 @@ export const createPaymentOrder = async (req, res, next) => {
  * Cryptographically verify payment signature returned by Razorpay client SDK.
  */
 export const verifyPayment = async (req, res, next) => {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
+    const razorpayOrderId = req.body?.razorpayOrderId || req.body?.razorpay_order_id;
+    const razorpayPaymentId = req.body?.razorpayPaymentId || req.body?.razorpay_payment_id;
+    const razorpaySignature = req.body?.razorpaySignature || req.body?.razorpay_signature;
 
     if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
         return sendResponse(
