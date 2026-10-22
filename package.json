@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/local.js",
-    "dev": "nodemon -L --watch src src/local.js",
+    "dev": "nodemon -L --watch src --watch .env src/local.js",
     "db:migrate": "node src/data/runMigrations.js",
     "test": "node --test"
   },
