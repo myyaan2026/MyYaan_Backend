@@ -52,10 +52,15 @@ export const initializeFirebase = () => {
             }
             credential = cert(parsed);
         } else if (projectId && clientEmail && privateKey) {
-            const formattedKey = privateKey.replace(/\\n/g, "\n");
+            let formattedKey = String(privateKey).trim();
+            if ((formattedKey.startsWith('"') && formattedKey.endsWith('"')) ||
+                (formattedKey.startsWith("'") && formattedKey.endsWith("'"))) {
+                formattedKey = formattedKey.slice(1, -1);
+            }
+            formattedKey = formattedKey.replace(/\\n/g, "\n");
             credential = cert({
-                projectId,
-                clientEmail,
+                projectId: String(projectId).trim(),
+                clientEmail: String(clientEmail).trim(),
                 privateKey: formattedKey,
             });
         } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
