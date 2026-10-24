@@ -13,6 +13,8 @@ import {
     reviewBooking,
 } from "../../../../controller/user/service/booking/serviceBookingController.js";
 
+import { createPaymentOrder } from "../../../../controller/payment/paymentController.js";
+
 const router = express.Router();
 const userOnly = [authenticate, requireRole("user")];
 
@@ -25,6 +27,7 @@ router.post("/users/bookings/review", ...userOnly, reviewBooking);
 router.post("/users/bookings", ...userOnly, createBooking);
 router.get("/users/bookings", ...userOnly, listMyBookings);
 router.get("/users/bookings/:bookingId", ...userOnly, getMyBooking);
+router.post("/users/bookings/:bookingId/pay-now", ...userOnly, createPaymentOrder);
 router.post("/users/bookings/:bookingId/cancel", ...userOnly, cancelBooking);
 router.post("/users/bookings/cancel", ...userOnly, cancelBooking);
 router.patch("/users/bookings/:bookingId/cancel", ...userOnly, cancelBooking);

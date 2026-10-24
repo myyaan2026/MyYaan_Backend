@@ -122,6 +122,7 @@ export const markPaymentSuccessful = async ({
         const bookingRes = await client.query(
             `UPDATE service_bookings
              SET payment_status = 'PAID',
+                 payment_mode = 'PAY_NOW',
                  booking_status = 'CONFIRMED',
                  updated_at = CURRENT_TIMESTAMP
              WHERE booking_id = $1

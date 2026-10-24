@@ -13,7 +13,13 @@ const positiveId = (val) => (Number.isSafeInteger(Number(val)) && Number(val) > 
  * Create a new Razorpay order for an existing booking.
  */
 export const createPaymentOrder = async (req, res, next) => {
-    const bookingId = positiveId(req.body?.bookingId || req.body?.booking_id || req.query?.bookingId || req.query?.booking_id);
+    const bookingId = positiveId(
+        req.params?.bookingId ||
+        req.body?.bookingId ||
+        req.body?.booking_id ||
+        req.query?.bookingId ||
+        req.query?.booking_id
+    );
     if (!bookingId) {
         return sendResponse(res, 400, "bookingId is required and must be a positive integer");
     }
