@@ -3,6 +3,11 @@ import {
     requestAccountDeletion,
     saveUserProfile,
 } from "../../models/profile/userProfileModel.js";
+import {
+    getMediaFileById,
+    getMediaFileByUuid,
+} from "../../models/media/mediaModel.js";
+import { decryptMediaToken, encryptMediaId } from "../../utils/mediaCrypto.js";
 import { sendResponse } from "../../utils/response.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -20,9 +25,66 @@ export const getMyProfile = async (req, res, next) => {
 };
 
 export const updateMyProfile = async (req, res, next) => {
+    const rawPicId = req.body.profilePicId ?? req.body.profile_pic_id ?? req.body.mediaId;
+    const hasPicField = rawPicId !== undefined || req.body.profilePicUrl !== undefined;
+
+    let profilePicId = null;
+    let encryptedPicId = null;
+    let profilePicUrl = cleanText(req.body.profilePicUrl) || null;
+
+    if (rawPicId !== undefined && rawPicId !== null && String(rawPicId).trim() !== "") {
+        const token = String(rawPicId).trim();
+        const decrypted = decryptMediaToken(token);
+        let numericId = decrypted?.mediaId;
+
+        if (!numericId && /^\d+$/.test(token)) {
+            numericId = parseInt(token, 10);
+        }
+        if (!numericId && decrypted?.uuidToken) {
+            const mediaByUuid = await getMediaFileByUuid(decrypted.uuidToken);
+            if (mediaByUuid) {
+                numericId = mediaByUuid.mediaId;
+            }
+        }
+
+        if (!numericId) {
+            return sendResponse(res, 400, "Invalid media ID provided for profile picture");
+        }
+
+        const media = await getMediaFileById(numericId);
+        if (!media) {
+            return sendResponse(res, 404, "Profile picture media file not found");
+        }
+
+        profilePicId = media.mediaId;
+        encryptedPicId = encryptMediaId(media.mediaId, media.uuidToken);
+        profilePicUrl = `/api/media/${encryptedPicId}`;
+    } else if (profilePicUrl) {
+        const urlMatch = profilePicUrl.match(/\/media\/([a-zA-Z0-9_.-]+)/);
+        if (urlMatch) {
+            const token = urlMatch[1];
+            const decrypted = decryptMediaToken(token);
+            let numericId = decrypted?.mediaId;
+            if (!numericId && /^\d+$/.test(token)) {
+                numericId = parseInt(token, 10);
+            }
+            if (numericId) {
+                const media = await getMediaFileById(numericId);
+                if (media) {
+                    profilePicId = media.mediaId;
+                    encryptedPicId = encryptMediaId(media.mediaId, media.uuidToken);
+                    profilePicUrl = `/api/media/${encryptedPicId}`;
+                }
+            }
+        }
+    }
+
     const details = {
         userId: req.auth.userId,
-        profilePicUrl: cleanText(req.body.profilePicUrl) || null,
+        updateProfilePic: hasPicField,
+        profilePicId,
+        encryptedProfilePicId: encryptedPicId,
+        profilePicUrl,
         firstName: cleanText(req.body.firstName),
         lastName: cleanText(req.body.lastName),
         email: cleanText(req.body.email).toLowerCase(),
@@ -41,7 +103,8 @@ export const updateMyProfile = async (req, res, next) => {
         if (result.status === "same_mobile") {
             return sendResponse(res, 400, "Alternative mobile must differ from the registered mobile");
         }
-        return sendResponse(res, 200, "Details are filled successfully");
+        const updatedProfile = await getUserProfile(req.auth.userId);
+        return sendResponse(res, 200, "Details are filled successfully", updatedProfile);
     } catch (error) {
         return next(error);
     }

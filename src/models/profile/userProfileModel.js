@@ -1,19 +1,46 @@
 import pool from "../../config/db.js";
+import { encryptMediaId } from "../../utils/mediaCrypto.js";
 
 export const getUserProfile = async (userId) => {
     const result = await pool.query(
         `SELECT users.user_id AS "userId", users.mobile, roles.code AS role,
                 users.is_profile_updated AS "isProfileUpdated",
+                profile.profile_pic_id AS "profilePicIdRaw",
+                mf.uuid_token AS "uuidToken",
                 profile.profile_pic_url AS "profilePicUrl",
                 profile.first_name AS "firstName", profile.last_name AS "lastName",
                 profile.email, profile.alternative_mobile AS "alternativeMobile",
                 COALESCE(profile.is_completed, FALSE) AS "isCompleted"
          FROM users JOIN roles ON roles.role_id = users.role_id
          LEFT JOIN user_profiles profile ON profile.user_id = users.user_id
+         LEFT JOIN media_files mf ON mf.media_id = profile.profile_pic_id
          WHERE users.user_id = $1`,
         [userId]
     );
-    return result.rows[0] ?? null;
+    const row = result.rows[0];
+    if (!row) return null;
+
+    let profilePicId = null;
+    let profilePicUrl = row.profilePicUrl || null;
+
+    if (row.profilePicIdRaw) {
+        profilePicId = encryptMediaId(row.profilePicIdRaw, row.uuidToken);
+        profilePicUrl = `/api/media/${profilePicId}`;
+    }
+
+    return {
+        userId: row.userId,
+        mobile: row.mobile,
+        role: row.role,
+        isProfileUpdated: row.isProfileUpdated,
+        profilePicId,
+        profilePicUrl,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        email: row.email,
+        alternativeMobile: row.alternativeMobile,
+        isCompleted: row.isCompleted,
+    };
 };
 
 export const saveUserProfile = async (details) => {
@@ -36,21 +63,31 @@ export const saveUserProfile = async (details) => {
             await client.query("ROLLBACK");
             return { status: "same_mobile" };
         }
+        const updatePic = details.updateProfilePic !== false;
         await client.query(
             `INSERT INTO user_profiles
-                (user_id, profile_pic_url, first_name, last_name, email,
+                (user_id, profile_pic_id, profile_pic_url, first_name, last_name, email,
                  alternative_mobile, is_completed)
-             VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
              ON CONFLICT (user_id) DO UPDATE SET
-                profile_pic_url = EXCLUDED.profile_pic_url,
+                profile_pic_id = CASE WHEN $8::boolean THEN EXCLUDED.profile_pic_id ELSE user_profiles.profile_pic_id END,
+                profile_pic_url = CASE WHEN $8::boolean THEN EXCLUDED.profile_pic_url ELSE user_profiles.profile_pic_url END,
                 first_name = EXCLUDED.first_name,
                 last_name = EXCLUDED.last_name,
                 email = EXCLUDED.email,
                 alternative_mobile = EXCLUDED.alternative_mobile,
                 is_completed = TRUE,
                 updated_at = CURRENT_TIMESTAMP`,
-            [details.userId, details.profilePicUrl, details.firstName,
-                details.lastName, details.email, details.alternativeMobile]
+            [
+                details.userId,
+                details.profilePicId ?? null,
+                details.profilePicUrl ?? null,
+                details.firstName,
+                details.lastName,
+                details.email,
+                details.alternativeMobile,
+                updatePic,
+            ]
         );
         if (user.role === "service_partner") {
             await client.query(

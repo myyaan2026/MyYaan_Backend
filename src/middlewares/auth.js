@@ -39,3 +39,36 @@ export const requireRole = (role) => (req, res, next) => {
     if (req.auth?.role !== role) return sendResponse(res, 403, "You are not allowed to access this resource");
     return next();
 };
+
+export const optionalAuthenticate = async (req, res, next) => {
+    const authorization = String(req.headers.authorization ?? "");
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!match) return next();
+
+    try {
+        const result = await pool.query(
+            `UPDATE auth_sessions session SET last_used_at = CURRENT_TIMESTAMP
+             FROM users JOIN roles ON roles.role_id = users.role_id
+             WHERE session.user_id = users.user_id
+               AND session.token_hash = $1
+               AND session.revoked_at IS NULL
+               AND session.expires_at > CURRENT_TIMESTAMP
+               AND users.is_verified = TRUE
+               AND users.is_login_enabled = TRUE
+             RETURNING session.session_id, users.user_id, roles.code AS role, session.expires_at`,
+            [hashToken(match[1].trim())]
+        );
+        if (result.rowCount) {
+            req.auth = {
+                sessionId: Number(result.rows[0].session_id),
+                userId: Number(result.rows[0].user_id),
+                role: result.rows[0].role,
+                expiresAt: result.rows[0].expires_at,
+            };
+        }
+        return next();
+    } catch {
+        return next();
+    }
+};
+
