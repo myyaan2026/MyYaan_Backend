@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
     getMediaFileById,
+    getMediaFileByMediaCode,
     getMediaFileByUuid,
     saveMediaFile,
 } from "../../models/media/mediaModel.js";
@@ -149,11 +150,11 @@ export const uploadMedia = async (req, res, next) => {
             fileData: fileBuffer,
         });
 
-        const encryptedMediaId = encryptMediaId(saved.mediaId, saved.uuidToken);
-        const mediaUrl = `/api/media/${encryptedMediaId}`;
+        const returnedMediaId = saved.mediaCode || encryptMediaId(saved.mediaId, saved.uuidToken);
+        const mediaUrl = `/api/media/${returnedMediaId}`;
 
         return sendResponse(res, 201, "Image uploaded successfully", {
-            mediaId: encryptedMediaId,
+            mediaId: returnedMediaId,
             fileName: saved.fileName,
             mimeType: saved.mimeType,
             fileSize: saved.fileSize,
@@ -174,16 +175,25 @@ export const serveMedia = async (req, res, next) => {
             return res.status(400).json({ status: 400, message: "Media ID is required" });
         }
 
-        const decrypted = decryptMediaToken(mediaId);
-        let media = null;
+        // 1. Look up by media_code first (e.g. med_2ca0b57344c0b57cb5a6e11ec0f09c70 or catalog med_bc_1)
+        let media = await getMediaFileByMediaCode(mediaId);
 
-        if (decrypted?.mediaId) {
-            media = await getMediaFileById(decrypted.mediaId);
-        } else if (decrypted?.uuidToken) {
-            media = await getMediaFileByUuid(decrypted.uuidToken);
-        } else if (/^\d+$/.test(mediaId)) {
+        // 2. If not found, attempt decrypting AES-256 token
+        if (!media) {
+            const decrypted = decryptMediaToken(mediaId);
+            if (decrypted?.mediaId) {
+                media = await getMediaFileById(decrypted.mediaId);
+            } else if (decrypted?.uuidToken) {
+                media = await getMediaFileByUuid(decrypted.uuidToken);
+            }
+        }
+
+        // 3. Fallbacks for numeric ID or UUID
+        if (!media && /^\d+$/.test(mediaId)) {
             media = await getMediaFileById(parseInt(mediaId, 10));
-        } else {
+        }
+
+        if (!media) {
             media = await getMediaFileByUuid(mediaId);
         }
 
