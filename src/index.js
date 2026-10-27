@@ -15,6 +15,7 @@ import homeServiceRoutes from "./routes/user/home/homeServiceRoutes.js";
 import serviceBookingRoutes from "./routes/user/service/booking/serviceBookingRoutes.js";
 import servicePartnerDiscoveryRoutes from "./routes/user/service/discovery/servicePartnerDiscoveryRoutes.js";
 import paymentRoutes from "./routes/payment/paymentRoutes.js";
+import mediaRoutes from "./routes/media/mediaRoutes.js";
 import errorHandling from "./middlewares/errorHandler.js";
 
 const app = express();
@@ -41,6 +42,8 @@ app.use("/api", servicePartnerRoutes);
 app.use("/api", userProfileRoutes);
 app.use("/api", userAddressRoutes);
 app.use("/api", servicePartnerProfileRoutes);
+app.use("/api", mediaRoutes);
+app.use(mediaRoutes);
 app.get("/health", (req, res) => {
     res.status(200).json({ status: "ok" });
 });

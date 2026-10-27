@@ -10,7 +10,7 @@ import {
 import { authenticate } from "../../middlewares/auth.js";
 
 const router = express.Router();
-router.use(authenticate);
+router.use(["/users/addresses", "/users/address"], authenticate);
 
 router.get("/users/addresses", listMyAddresses);
 router.get("/users/addresses/:addressId", getMyAddress);

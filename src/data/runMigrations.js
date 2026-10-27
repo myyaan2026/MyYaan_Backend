@@ -25,6 +25,7 @@ const migrations = [
     "booking_and_coupons/create_coupons_and_bookings.sql",
     "booking_and_coupons/add_service_center_pricing_and_history.sql",
     "profile_creation/add_address_details_and_account_deletion.sql",
+    "media/create_media_files_and_profile_pic_id.sql",
 ];
 
 const run = async () => {

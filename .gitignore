@@ -3,3 +3,5 @@ node_modules/
 npm-debug.log*
 firebase-service-account.json
 *firebase*.json
+.DS_Store
+
