@@ -6,6 +6,8 @@ export const getUserProfile = async (userId) => {
         `SELECT users.user_id AS "userId", users.mobile, roles.code AS role,
                 users.is_profile_updated AS "isProfileUpdated",
                 profile.profile_pic_id AS "profilePicIdRaw",
+                profile.profile_pic_media_code AS "profilePicMediaCode",
+                mf.media_code AS "mediaCode",
                 mf.uuid_token AS "uuidToken",
                 profile.profile_pic_url AS "profilePicUrl",
                 profile.first_name AS "firstName", profile.last_name AS "lastName",
@@ -20,20 +22,19 @@ export const getUserProfile = async (userId) => {
     const row = result.rows[0];
     if (!row) return null;
 
-    let profilePicId = null;
-    let profilePicUrl = row.profilePicUrl || null;
+    const publicMediaId =
+        row.profilePicMediaCode ||
+        row.mediaCode ||
+        (row.profilePicIdRaw ? encryptMediaId(row.profilePicIdRaw, row.uuidToken) : null);
 
-    if (row.profilePicIdRaw) {
-        profilePicId = encryptMediaId(row.profilePicIdRaw, row.uuidToken);
-        profilePicUrl = `/api/media/${profilePicId}`;
-    }
+    const profilePicUrl = publicMediaId ? `/api/media/${publicMediaId}` : (row.profilePicUrl || null);
 
     return {
         userId: row.userId,
         mobile: row.mobile,
         role: row.role,
         isProfileUpdated: row.isProfileUpdated,
-        profilePicId,
+        profilePicId: publicMediaId,
         profilePicUrl,
         firstName: row.firstName,
         lastName: row.lastName,
@@ -66,12 +67,13 @@ export const saveUserProfile = async (details) => {
         const updatePic = details.updateProfilePic !== false;
         await client.query(
             `INSERT INTO user_profiles
-                (user_id, profile_pic_id, profile_pic_url, first_name, last_name, email,
+                (user_id, profile_pic_id, profile_pic_media_code, profile_pic_url, first_name, last_name, email,
                  alternative_mobile, is_completed)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
              ON CONFLICT (user_id) DO UPDATE SET
-                profile_pic_id = CASE WHEN $8::boolean THEN EXCLUDED.profile_pic_id ELSE user_profiles.profile_pic_id END,
-                profile_pic_url = CASE WHEN $8::boolean THEN EXCLUDED.profile_pic_url ELSE user_profiles.profile_pic_url END,
+                profile_pic_id = CASE WHEN $9::boolean THEN EXCLUDED.profile_pic_id ELSE user_profiles.profile_pic_id END,
+                profile_pic_media_code = CASE WHEN $9::boolean THEN EXCLUDED.profile_pic_media_code ELSE user_profiles.profile_pic_media_code END,
+                profile_pic_url = CASE WHEN $9::boolean THEN EXCLUDED.profile_pic_url ELSE user_profiles.profile_pic_url END,
                 first_name = EXCLUDED.first_name,
                 last_name = EXCLUDED.last_name,
                 email = EXCLUDED.email,
@@ -81,6 +83,7 @@ export const saveUserProfile = async (details) => {
             [
                 details.userId,
                 details.profilePicId ?? null,
+                details.profilePicMediaCode ?? null,
                 details.profilePicUrl ?? null,
                 details.firstName,
                 details.lastName,

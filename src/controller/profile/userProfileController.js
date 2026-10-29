@@ -5,6 +5,7 @@ import {
 } from "../../models/profile/userProfileModel.js";
 import {
     getMediaFileById,
+    getMediaFileByMediaCode,
     getMediaFileByUuid,
 } from "../../models/media/mediaModel.js";
 import { decryptMediaToken, encryptMediaId } from "../../utils/mediaCrypto.js";
@@ -29,52 +30,60 @@ export const updateMyProfile = async (req, res, next) => {
     const hasPicField = rawPicId !== undefined || req.body.profilePicUrl !== undefined;
 
     let profilePicId = null;
-    let encryptedPicId = null;
+    let profilePicMediaCode = null;
     let profilePicUrl = cleanText(req.body.profilePicUrl) || null;
 
     if (rawPicId !== undefined && rawPicId !== null && String(rawPicId).trim() !== "") {
         const token = String(rawPicId).trim();
-        const decrypted = decryptMediaToken(token);
-        let numericId = decrypted?.mediaId;
 
-        if (!numericId && /^\d+$/.test(token)) {
-            numericId = parseInt(token, 10);
-        }
-        if (!numericId && decrypted?.uuidToken) {
-            const mediaByUuid = await getMediaFileByUuid(decrypted.uuidToken);
-            if (mediaByUuid) {
-                numericId = mediaByUuid.mediaId;
+        // 1. Look up by media_code (e.g. med_2ca0b57344c0b57cb5a6e11ec0f09c70 or med_up_...)
+        let media = await getMediaFileByMediaCode(token);
+
+        // 2. If not found, attempt decrypting AES-256 token
+        if (!media) {
+            const decrypted = decryptMediaToken(token);
+            if (decrypted?.mediaId) {
+                media = await getMediaFileById(decrypted.mediaId);
+            } else if (decrypted?.uuidToken) {
+                media = await getMediaFileByUuid(decrypted.uuidToken);
             }
         }
 
-        if (!numericId) {
-            return sendResponse(res, 400, "Invalid media ID provided for profile picture");
+        // 3. Fallbacks for numeric ID or UUID
+        if (!media && /^\d+$/.test(token)) {
+            media = await getMediaFileById(parseInt(token, 10));
         }
 
-        const media = await getMediaFileById(numericId);
+        if (!media) {
+            media = await getMediaFileByUuid(token);
+        }
+
         if (!media) {
             return sendResponse(res, 404, "Profile picture media file not found");
         }
 
         profilePicId = media.mediaId;
-        encryptedPicId = encryptMediaId(media.mediaId, media.uuidToken);
-        profilePicUrl = `/api/media/${encryptedPicId}`;
+        profilePicMediaCode = media.mediaCode || null;
+        const publicMediaId = media.mediaCode || encryptMediaId(media.mediaId, media.uuidToken);
+        profilePicUrl = `/api/media/${publicMediaId}`;
     } else if (profilePicUrl) {
         const urlMatch = profilePicUrl.match(/\/media\/([a-zA-Z0-9_.-]+)/);
         if (urlMatch) {
             const token = urlMatch[1];
-            const decrypted = decryptMediaToken(token);
-            let numericId = decrypted?.mediaId;
-            if (!numericId && /^\d+$/.test(token)) {
-                numericId = parseInt(token, 10);
-            }
-            if (numericId) {
-                const media = await getMediaFileById(numericId);
-                if (media) {
-                    profilePicId = media.mediaId;
-                    encryptedPicId = encryptMediaId(media.mediaId, media.uuidToken);
-                    profilePicUrl = `/api/media/${encryptedPicId}`;
+            let media = await getMediaFileByMediaCode(token);
+            if (!media) {
+                const decrypted = decryptMediaToken(token);
+                if (decrypted?.mediaId) {
+                    media = await getMediaFileById(decrypted.mediaId);
+                } else if (/^\d+$/.test(token)) {
+                    media = await getMediaFileById(parseInt(token, 10));
                 }
+            }
+            if (media) {
+                profilePicId = media.mediaId;
+                profilePicMediaCode = media.mediaCode || null;
+                const publicMediaId = media.mediaCode || encryptMediaId(media.mediaId, media.uuidToken);
+                profilePicUrl = `/api/media/${publicMediaId}`;
             }
         }
     }
@@ -83,7 +92,7 @@ export const updateMyProfile = async (req, res, next) => {
         userId: req.auth.userId,
         updateProfilePic: hasPicField,
         profilePicId,
-        encryptedProfilePicId: encryptedPicId,
+        profilePicMediaCode,
         profilePicUrl,
         firstName: cleanText(req.body.firstName),
         lastName: cleanText(req.body.lastName),
