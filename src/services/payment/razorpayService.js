@@ -233,6 +233,10 @@ export const verifyRazorpayPayment = async ({
                     s.service_name AS "serviceName", opt.service_option_name AS "serviceOptionName",
                     COALESCE(bikeComp.company_name, carComp.company_name) AS "companyName",
                     COALESCE(bikeMod.model_name, carMod.model_name) AS "modelName",
+                    COALESCE(bikeComp.logo_media_code, carComp.logo_media_code) AS "companyLogoId",
+                    COALESCE(bikeComp.logo_url, '/api/media/' || bikeComp.logo_media_code, carComp.logo_url, '/api/media/' || carComp.logo_media_code) AS "companyLogoUrl",
+                    COALESCE(bikeMod.image_media_code, carMod.image_media_code) AS "modelImageId",
+                    COALESCE(bikeMod.image_url, '/api/media/' || bikeMod.image_media_code, carMod.image_url, '/api/media/' || carMod.image_media_code) AS "modelImageUrl",
                     uv.vehicle_number AS "vehicleNumber"
              FROM service_bookings b
              JOIN service_types s ON s.service_id = b.service_id
@@ -258,6 +262,10 @@ export const verifyRazorpayPayment = async ({
                     companyName: b.companyName,
                     modelName: b.modelName,
                     vehicleNumber: b.vehicleNumber,
+                    companyLogoId: b.companyLogoId || null,
+                    companyLogoUrl: b.companyLogoUrl || null,
+                    modelImageId: b.modelImageId || null,
+                    modelImageUrl: b.modelImageUrl || null,
                 },
                 service: {
                     serviceName: b.serviceName,
