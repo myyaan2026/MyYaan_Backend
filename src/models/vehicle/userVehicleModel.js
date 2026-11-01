@@ -10,8 +10,10 @@ const vehicleSelect = `SELECT detail.vehicle_id AS "vehicleId", detail.vehicle_t
     detail.vehicle_number AS "vehicleNumber", detail.is_primary AS "isPrimary",
     COALESCE(bikeCompany.company_name, carCompany.company_name) AS "companyName",
     COALESCE(bikeModel.model_name, carModel.model_name) AS "modelName",
-    COALESCE(bikeCompany.logo_url, carCompany.logo_url) AS "companyLogoUrl",
-    COALESCE(bikeModel.image_url, carModel.image_url) AS "modelImageUrl",
+    COALESCE(bikeCompany.logo_media_code, carCompany.logo_media_code) AS "companyLogoId",
+    COALESCE(bikeCompany.logo_url, '/api/media/' || bikeCompany.logo_media_code, carCompany.logo_url, '/api/media/' || carCompany.logo_media_code) AS "companyLogoUrl",
+    COALESCE(bikeModel.image_media_code, carModel.image_media_code) AS "modelImageId",
+    COALESCE(bikeModel.image_url, '/api/media/' || bikeModel.image_media_code, carModel.image_url, '/api/media/' || carModel.image_media_code) AS "modelImageUrl",
     COALESCE(detail.bike_company_id, detail.car_company_id) AS "companyId",
     COALESCE(detail.bike_model_id, detail.car_model_id) AS "modelId",
     detail.created_at AS "createdAt", detail.updated_at AS "updatedAt"
@@ -25,7 +27,10 @@ export const getVehicleCompanies = async (vehicleType) => {
     const c = catalogForType(vehicleType);
     const result = await pool.query(`SELECT company.${c.companyId} AS "companyId", company.company_name AS "companyName",
         company.company_short_name AS "companyShortName", company.company_long_name AS "companyLongName",
-        company.logo_url AS "logoUrl"
+        company.logo_media_code AS "logoId",
+        company.logo_media_code AS "companyLogoId",
+        COALESCE(company.logo_url, '/api/media/' || company.logo_media_code) AS "logoUrl",
+        COALESCE(company.logo_url, '/api/media/' || company.logo_media_code) AS "companyLogoUrl"
         FROM ${c.companies} company WHERE company.is_enabled=TRUE AND EXISTS
         (SELECT 1 FROM ${c.models} model WHERE model.${c.companyId}=company.${c.companyId}
          AND model.is_enabled=TRUE AND model.vehicle_type=$1) ORDER BY company.company_name`, [vehicleType]);
@@ -38,9 +43,15 @@ export const getVehicleModels = async (vehicleType, companyId = null) => {
     if (companyId) values.push(companyId);
     const result = await pool.query(`SELECT model.${c.modelId} AS "modelId", model.model_name AS "modelName",
         model.model_short_name AS "modelShortName", model.model_long_name AS "modelLongName", model.engine_cc AS "engineCc",
-        model.image_url AS "imageUrl",
+        model.image_media_code AS "imageId",
+        model.image_media_code AS "modelImageId",
+        COALESCE(model.image_url, '/api/media/' || model.image_media_code) AS "imageUrl",
+        COALESCE(model.image_url, '/api/media/' || model.image_media_code) AS "modelImageUrl",
         company.${c.companyId} AS "companyId", company.company_name AS "companyName",
-        company.logo_url AS "companyLogoUrl"
+        company.logo_media_code AS "logoId",
+        company.logo_media_code AS "companyLogoId",
+        COALESCE(company.logo_url, '/api/media/' || company.logo_media_code) AS "companyLogoUrl",
+        COALESCE(company.logo_url, '/api/media/' || company.logo_media_code) AS "logoUrl"
         FROM ${c.models} model JOIN ${c.companies} company ON company.${c.companyId}=model.${c.companyId}
         WHERE model.is_enabled=TRUE AND company.is_enabled=TRUE AND model.vehicle_type=$1${filter}
         ORDER BY company.company_name, model.model_name`, values);
