@@ -19,7 +19,7 @@ export const createRazorpayOrderForBooking = async ({ userId, bookingId }) => {
     // 1. Fetch booking details
     const bookingRes = await pool.query(
         `SELECT b.booking_id, b.booking_number, b.user_id, b.service_center_id,
-                b.final_amount, b.payment_status, b.booking_status, b.booking_date, b.booking_time_slot,
+                b.final_amount, b.due_amount, b.paid_amount, b.payment_status, b.booking_status, b.booking_date, b.booking_time_slot,
                 COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p.first_name, p.last_name)), ''), 'Customer') AS customer_name,
                 p.email AS customer_email,
                 u.mobile AS customer_mobile
@@ -40,17 +40,21 @@ export const createRazorpayOrderForBooking = async ({ userId, bookingId }) => {
         return { status: "booking_cancelled", message: "Cannot pay for a cancelled booking" };
     }
 
-    if (booking.payment_status === "PAID") {
+    const dueAmount = booking.due_amount !== null && booking.due_amount !== undefined
+        ? Number(booking.due_amount)
+        : (booking.payment_status === "PAID" ? 0 : Number(booking.final_amount));
+
+    if (booking.payment_status === "PAID" || dueAmount <= 0) {
         return { status: "already_paid", message: "This booking is already paid" };
     }
 
-    const finalAmount = Number(booking.final_amount);
-    if (finalAmount <= 0) {
-        return { status: "invalid_amount", message: "Booking final amount must be greater than zero" };
+    const orderAmount = dueAmount > 0 ? dueAmount : Number(booking.final_amount);
+    if (orderAmount <= 0) {
+        return { status: "invalid_amount", message: "Booking payable amount must be greater than zero" };
     }
 
     // Razorpay requires amount in paise (1 INR = 100 paise)
-    const amountInPaise = Math.round(finalAmount * 100);
+    const amountInPaise = Math.round(orderAmount * 100);
     const receipt = booking.booking_number.substring(0, 40); // Max 40 chars
 
     const razorpay = getRazorpayClient();
@@ -89,7 +93,7 @@ export const createRazorpayOrderForBooking = async ({ userId, bookingId }) => {
         bookingId: booking.booking_id,
         userId: booking.user_id,
         razorpayOrderId,
-        amount: finalAmount,
+        amount: orderAmount,
         currency: "INR",
         metadata: {
             bookingNumber: booking.booking_number,

@@ -19,7 +19,7 @@ const ALLOWED_MIME_TYPES = new Set([
     "image/svg+xml",
 ]);
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB
 
 /**
  * Detects image mime type from initial buffer magic numbers.
@@ -132,7 +132,7 @@ export const uploadMedia = async (req, res, next) => {
             return sendResponse(
                 res,
                 400,
-                `File size exceeds 5MB limit. Current size: ${(fileBuffer.length / (1024 * 1024)).toFixed(2)}MB`
+                "Image is too large. Image should not be more than 4MB"
             );
         }
 

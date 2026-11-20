@@ -21,12 +21,14 @@ import errorHandling from "./middlewares/errorHandler.js";
 const app = express();
 //const port = process.env.PORT || 3001;
 
-//Middlewares
+// Middlewares
 app.use(express.json({
+    limit: "50mb",
     verify: (req, _res, buf) => {
         req.rawBody = buf.toString();
     }
 }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cors());
 
 //Routes
@@ -37,6 +39,7 @@ app.use("/api", serviceBookingRoutes);
 app.use("/api", servicePartnerDiscoveryRoutes);
 app.use("/api", paymentRoutes);
 app.use("/api", deviceRoutes);
+app.use(deviceRoutes);
 app.use("/api", systemRoutes);
 app.use("/api", servicePartnerRoutes);
 app.use("/api", userProfileRoutes);

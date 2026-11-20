@@ -122,15 +122,74 @@ export const markPaymentSuccessful = async ({
         const bookingRes = await client.query(
             `UPDATE service_bookings
              SET payment_status = 'PAID',
-                 payment_mode = 'PAY_NOW',
-                 booking_status = 'CONFIRMED',
+                 payment_mode = CASE 
+                     WHEN payment_mode IS NULL OR payment_mode = 'PAY_NOW' THEN 'ONLINE'
+                     ELSE payment_mode
+                 END,
+                 paid_amount = final_amount,
+                 due_amount = 0.00,
+                 booking_status = CASE 
+                     WHEN booking_status = 'COMPLETED' THEN 'COMPLETED'
+                     WHEN booking_status = 'IN_PROGRESS' THEN 'IN_PROGRESS'
+                     ELSE 'CONFIRMED'
+                 END,
                  updated_at = CURRENT_TIMESTAMP
              WHERE booking_id = $1
              RETURNING booking_id, booking_number, user_id, service_center_id,
-                       booking_date, booking_time_slot, final_amount,
-                       payment_mode, payment_status, booking_status`,
+                       booking_date, booking_time_slot, base_price, delivery_charge,
+                       extra_amount, commission_amount, discount_amount, final_amount,
+                       paid_amount, due_amount, payment_mode, payment_status, booking_status`,
             [payment.booking_id]
         );
+
+        const updatedBk = bookingRes.rows[0];
+        // If booking is completed, settle partner wallet
+        if (updatedBk && updatedBk.booking_status === "COMPLETED") {
+            const partnerShare = Number((Number(updatedBk.base_price || 0) + Number(updatedBk.delivery_charge || 0) + Number(updatedBk.extra_amount || 0)).toFixed(2));
+            const cashRes = await client.query(
+                `SELECT COALESCE(SUM(amount), 0)::numeric AS total_cash FROM booking_payments WHERE booking_id = $1 AND gateway = 'CASH' AND status = 'PAID'`,
+                [payment.booking_id]
+            );
+            const cashCollected = Number(cashRes.rows[0]?.total_cash || 0);
+            const targetWallet = Math.max(0, Number((partnerShare - cashCollected).toFixed(2)));
+
+            const wRes = await client.query(
+                `SELECT COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0)::numeric AS credited FROM partner_wallet_transactions WHERE booking_id = $1`,
+                [payment.booking_id]
+            );
+            const prevCredited = Number(wRes.rows[0]?.credited || 0);
+            const delta = Number((targetWallet - prevCredited).toFixed(2));
+            if (delta > 0) {
+                const pwRes = await client.query(
+                    `INSERT INTO partner_wallets (service_center_id, balance, total_earned)
+                     VALUES ($1, $2, $2)
+                     ON CONFLICT (service_center_id)
+                     DO UPDATE SET balance = partner_wallets.balance + $2,
+                                   total_earned = partner_wallets.total_earned + $2,
+                                   updated_at = CURRENT_TIMESTAMP
+                     RETURNING wallet_id, balance`,
+                    [updatedBk.service_center_id, delta]
+                );
+                const wallet = pwRes.rows[0];
+                const closingBalance = Number(wallet.balance);
+                const openingBalance = Number((closingBalance - delta).toFixed(2));
+
+                await client.query(
+                    `INSERT INTO partner_wallet_transactions
+                        (wallet_id, service_center_id, booking_id, transaction_type, amount, opening_balance, closing_balance, tag, description)
+                     VALUES ($1, $2, $3, 'CREDIT', $4, $5, $6, 'SERVICE_EARNING', $7)`,
+                    [
+                        wallet.wallet_id,
+                        updatedBk.service_center_id,
+                        updatedBk.booking_id,
+                        delta,
+                        openingBalance,
+                        closingBalance,
+                        `Online payment earning for booking #${updatedBk.booking_number} (Partner share: ₹${partnerShare.toFixed(2)}, Credited: ₹${delta.toFixed(2)})`
+                    ]
+                );
+            }
+        }
 
         await client.query("COMMIT");
 
