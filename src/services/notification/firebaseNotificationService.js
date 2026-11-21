@@ -67,6 +67,19 @@ export const initializeFirebase = () => {
             credential = applicationDefault();
         }
 
+        // Automatic fallback: check for firebase-service-account.json in project root
+        if (!credential) {
+            const defaultJsonPath = path.resolve(process.cwd(), "firebase-service-account.json");
+            if (fs.existsSync(defaultJsonPath)) {
+                try {
+                    const serviceAccount = JSON.parse(fs.readFileSync(defaultJsonPath, "utf8"));
+                    credential = cert(serviceAccount);
+                } catch (e) {
+                    console.warn("[Firebase] Could not parse ./firebase-service-account.json:", e.message);
+                }
+            }
+        }
+
         if (credential) {
             initializeApp({ credential });
             firebaseInitialized = true;
@@ -150,13 +163,18 @@ export const sendMulticastNotification = async ({ tokens, title, body, data = {}
         return { success: true, deliveredCount: 0, failedCount: 0, message: "No tokens provided" };
     }
 
+    const uniqueTokens = Array.from(new Set(tokens.filter(Boolean)));
+    if (uniqueTokens.length === 0) {
+        return { success: true, deliveredCount: 0, failedCount: 0, message: "No valid tokens provided" };
+    }
+
     const isReady = initializeFirebase();
     if (!isReady) {
-        console.info(`[Firebase Notification SIMULATED] Title: "${title}", Body: "${body}", Recipients: ${tokens.length} tokens`);
+        console.info(`[Firebase Notification SIMULATED] Title: "${title}", Body: "${body}", Recipients: ${uniqueTokens.length} tokens`);
         return {
             success: true,
             simulated: true,
-            deliveredCount: tokens.length,
+            deliveredCount: uniqueTokens.length,
             message: "Notification simulated (Firebase credentials not yet provided in .env)",
         };
     }
@@ -167,8 +185,7 @@ export const sendMulticastNotification = async ({ tokens, title, body, data = {}
         stringData[key] = val == null ? "" : String(val);
     }
 
-    const message = {
-        tokens,
+    const baseMessage = {
         notification: {
             title,
             body,
@@ -177,36 +194,59 @@ export const sendMulticastNotification = async ({ tokens, title, body, data = {}
         android: {
             priority: "high",
             notification: {
-                channelId: "booking_updates",
+                channelId: data.channelId || "booking_updates",
                 sound: "default",
                 priority: "high",
+                defaultSound: true,
+                defaultVibrateTimings: true,
             },
         },
         apns: {
+            headers: {
+                "apns-priority": "10",
+            },
             payload: {
                 aps: {
+                    alert: {
+                        title,
+                        body,
+                    },
                     sound: "default",
                     badge: 1,
+                    contentAvailable: true,
                 },
             },
         },
     };
 
     try {
-        const response = await getMessaging().sendEachForMulticast(message);
+        const BATCH_SIZE = 500;
+        let totalDelivered = 0;
+        let totalFailed = 0;
         const staleTokens = [];
 
-        response.responses.forEach((resp, idx) => {
-            if (!resp.success) {
-                const errorCode = resp.error?.code;
-                if (
-                    errorCode === "messaging/registration-token-not-registered" ||
-                    errorCode === "messaging/invalid-registration-token"
-                ) {
-                    staleTokens.push(tokens[idx]);
+        for (let i = 0; i < uniqueTokens.length; i += BATCH_SIZE) {
+            const batchTokens = uniqueTokens.slice(i, i + BATCH_SIZE);
+            const response = await getMessaging().sendEachForMulticast({
+                ...baseMessage,
+                tokens: batchTokens,
+            });
+
+            totalDelivered += response.successCount;
+            totalFailed += response.failureCount;
+
+            response.responses.forEach((resp, idx) => {
+                if (!resp.success) {
+                    const errorCode = resp.error?.code;
+                    if (
+                        errorCode === "messaging/registration-token-not-registered" ||
+                        errorCode === "messaging/invalid-registration-token"
+                    ) {
+                        staleTokens.push(batchTokens[idx]);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         if (staleTokens.length > 0) {
             await deactivateStaleTokens(staleTokens);
@@ -214,9 +254,9 @@ export const sendMulticastNotification = async ({ tokens, title, body, data = {}
 
         return {
             success: true,
-            deliveredCount: response.successCount,
-            failedCount: response.failureCount,
-            totalCount: tokens.length,
+            deliveredCount: totalDelivered,
+            failedCount: totalFailed,
+            totalCount: uniqueTokens.length,
         };
     } catch (error) {
         console.error("[Firebase] Error sending multicast push notification:", error);
@@ -314,4 +354,49 @@ export const sendBookingNotificationToCustomer = async ({ userId, bookingNumber,
         return { success: false, error: err.message };
     }
 };
+
+/**
+ * Send a custom push notification to all active devices of a user.
+ */
+export const sendNotificationToUser = async ({ userId, title, body, data = {} }) => {
+    try {
+        const userDevices = await getUserDeviceTokens(userId);
+        if (!userDevices.length) {
+            return { success: true, deliveredCount: 0, message: "No active devices found for user" };
+        }
+        const tokens = userDevices.map((d) => d.pushToken);
+        return await sendMulticastNotification({
+            tokens,
+            title,
+            body,
+            data,
+        });
+    } catch (err) {
+        console.error("[Notification] Error sending push notification to user:", err);
+        return { success: false, error: err.message };
+    }
+};
+
+/**
+ * Send a custom push notification to all active devices of a service partner.
+ */
+export const sendNotificationToPartner = async ({ serviceCenterId, title, body, data = {} }) => {
+    try {
+        const partnerDevices = await getPartnerDeviceTokens(serviceCenterId);
+        if (!partnerDevices.length) {
+            return { success: true, deliveredCount: 0, message: "No active devices found for partner" };
+        }
+        const tokens = partnerDevices.map((d) => d.pushToken);
+        return await sendMulticastNotification({
+            tokens,
+            title,
+            body,
+            data,
+        });
+    } catch (err) {
+        console.error("[Notification] Error sending push notification to partner:", err);
+        return { success: false, error: err.message };
+    }
+};
+
 

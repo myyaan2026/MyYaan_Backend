@@ -51,3 +51,42 @@ test("decryptMediaToken recognizes raw UUID as fallback", () => {
     assert.equal(res.uuidToken, rawUuid);
 });
 
+test("uploadMedia rejects image larger than 4MB with proper error message", async () => {
+    const { uploadMedia } = await import("../src/controller/media/mediaController.js");
+
+    // Create a 4.1MB dummy JPEG buffer (FF D8 FF)
+    const largeBuffer = Buffer.alloc(4.1 * 1024 * 1024);
+    largeBuffer[0] = 0xff;
+    largeBuffer[1] = 0xd8;
+    largeBuffer[2] = 0xff;
+
+    let responseStatus = null;
+    let responseBody = null;
+
+    const mockReq = {
+        file: {
+            buffer: largeBuffer,
+            mimetype: "image/jpeg",
+            originalname: "large_image.jpg",
+        },
+    };
+
+    const mockRes = {
+        status(code) {
+            responseStatus = code;
+            return this;
+        },
+        json(payload) {
+            responseBody = payload;
+            return this;
+        },
+    };
+
+    await uploadMedia(mockReq, mockRes);
+
+    assert.equal(responseStatus, 400);
+    assert.equal(responseBody.status, 400);
+    assert.equal(responseBody.message, "Image is too large. Image should not be more than 4MB");
+});
+
+

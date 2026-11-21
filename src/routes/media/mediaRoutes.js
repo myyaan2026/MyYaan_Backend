@@ -8,7 +8,7 @@ const router = express.Router();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB
+        fileSize: 4 * 1024 * 1024, // 4MB
     },
 });
 
@@ -24,7 +24,7 @@ const uploadMiddleware = (req, res, next) => {
             if (err.code === "LIMIT_FILE_SIZE") {
                 return res.status(400).json({
                     status: 400,
-                    message: "File size exceeds 5MB limit",
+                    message: "Image is too large. Image should not be more than 4MB",
                 });
             }
             if (err.message && err.message.includes("Unexpected end of form")) {
