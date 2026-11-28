@@ -197,6 +197,7 @@ export const reviewBooking = async (req, res, next) => {
         if (data.status === "sub_service_not_available") return sendResponse(res, 400, "Selected delivery mode is not available");
         if (data.status === "service_option_not_available") return sendResponse(res, 400, "Selected service option is not available for this vehicle");
         if (data.status === "invalid_time_slot") return sendResponse(res, 400, "Invalid time slot format");
+        if (data.status === "slot_not_available") return sendResponse(res, 400, data.message || "Selected time slot is not available or has already passed");
         if (data.status === "address_not_found") return sendResponse(res, 404, "Selected address not found");
         if (data.status === "address_required") return sendResponse(res, 400, "Please select an address for Home Service / Pick & Drop service");
         if (data.status === "invalid_coupon") return sendResponse(res, 400, data.message || "Invalid coupon code");

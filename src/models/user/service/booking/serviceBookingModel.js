@@ -15,6 +15,82 @@ export const BASE_SLOTS = [
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+/**
+ * Lead time buffer (in minutes) required before a slot start time.
+ * For example, if current time is 3:00 PM (15:00), any slot starting at or before 3:30 PM is excluded.
+ */
+export const SLOT_BOOKING_BUFFER_MINUTES = 30;
+
+/**
+ * Returns the current date in Asia/Kolkata (Indian Standard Time) as "YYYY-MM-DD".
+ */
+export const getTodayDateIST = () => {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(new Date());
+};
+
+/**
+ * Returns current minutes elapsed since 00:00 in Asia/Kolkata (Indian Standard Time).
+ */
+export const getCurrentMinutesIST = () => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "numeric",
+        minute: "numeric",
+        hour12: false,
+    }).formatToParts(new Date());
+    let h = 0;
+    let m = 0;
+    for (const p of parts) {
+        if (p.type === "hour") h = Number(p.value);
+        if (p.type === "minute") m = Number(p.value);
+    }
+    if (h === 24) h = 0;
+    return h * 60 + m;
+};
+
+/**
+ * Returns array of upcoming dates starting from today in Asia/Kolkata.
+ */
+export const getUpcomingDatesIST = (count = 7) => {
+    const dates = [];
+    const todayStr = getTodayDateIST();
+    const [y, m, d] = todayStr.split("-").map(Number);
+    for (let i = 0; i < count; i++) {
+        const dateObj = new Date(Date.UTC(y, m - 1, d + i, 12, 0, 0));
+        dates.push(dateObj.toISOString().split("T")[0]);
+    }
+    return dates;
+};
+
+/**
+ * Returns the English weekday name for a YYYY-MM-DD date.
+ */
+export const getDayNameIST = (dateStr) => {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const dateObj = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    return DAY_NAMES[dateObj.getUTCDay()] ?? "";
+};
+
+/**
+ * Verifies whether a given date and slot start time is in the future.
+ */
+export const isSlotUpcoming = (dateStr, slotStartTime, bufferMinutes = SLOT_BOOKING_BUFFER_MINUTES, currentMinutesOverride = null) => {
+    const todayStr = getTodayDateIST();
+    if (dateStr < todayStr) return false;
+    if (dateStr > todayStr) return true;
+
+    const currentMinutes = currentMinutesOverride !== null ? currentMinutesOverride : getCurrentMinutesIST();
+    const [h, m] = String(slotStartTime).split(":").map(Number);
+    const slotMinutes = h * 60 + (m || 0);
+
+    return slotMinutes > currentMinutes + bufferMinutes;
+};
+
 export const findMatchingSlot = (slotValue) => {
     const raw = String(slotValue ?? "").trim().toUpperCase().replace(/\s+/g, " ");
     return BASE_SLOTS.find((s) =>
@@ -120,13 +196,12 @@ export const getServiceOptionsData = async ({ userId, serviceId, subServiceId = 
     };
 };
 
-export const computeSlotsForDate = (dateStr, bookingsMap = new Map()) => {
-    const todayStr = new Date().toISOString().split("T")[0];
+export const computeSlotsForDate = (dateStr, bookingsMap = new Map(), currentMinutesOverride = null) => {
+    const todayStr = getTodayDateIST();
     if (dateStr < todayStr) return [];
 
     const isToday = dateStr === todayStr;
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const currentMinutes = currentMinutesOverride !== null ? currentMinutesOverride : getCurrentMinutesIST();
     const availableSlots = [];
     const MAX_CAPACITY_PER_SLOT = 2;
 
@@ -134,7 +209,8 @@ export const computeSlotsForDate = (dateStr, bookingsMap = new Map()) => {
         const [slotH, slotM] = slot.startTime.split(":").map(Number);
         const slotMinutes = slotH * 60 + slotM;
 
-        if (isToday && slotMinutes <= currentMinutes + 30) {
+        // On today's date, only upcoming slots strictly after current time + buffer are available
+        if (isToday && slotMinutes <= currentMinutes + SLOT_BOOKING_BUFFER_MINUTES) {
             continue;
         }
 
@@ -170,12 +246,7 @@ export const getAvailableTimeSlots = async ({ serviceCenterId, date = null }) =>
     if (date) {
         targetDates.push(date);
     } else {
-        const now = new Date();
-        for (let i = 0; i < 7; i++) {
-            const d = new Date(now);
-            d.setDate(now.getDate() + i);
-            targetDates.push(d.toISOString().split("T")[0]);
-        }
+        targetDates.push(...getUpcomingDatesIST(7));
     }
 
     const bookingsMap = new Map();
@@ -192,13 +263,12 @@ export const getAvailableTimeSlots = async ({ serviceCenterId, date = null }) =>
             bookingsMap.set(`${dateOnly}_${row.booking_time_slot}`, Number(row.count));
             bookingsMap.set(row.booking_time_slot, Number(row.count));
         }
-    } catch (e) {
+    } catch {
         // Table may be empty
     }
 
     const days = targetDates.map((dStr) => {
-        const dObj = new Date(`${dStr}T00:00:00`);
-        const dayName = DAY_NAMES[dObj.getDay()] ?? "";
+        const dayName = getDayNameIST(dStr);
         const slots = computeSlotsForDate(dStr, bookingsMap);
         return {
             date: dStr,
@@ -401,8 +471,22 @@ export const reviewBookingData = async ({
     if (!optionRes.rowCount) return { status: "service_option_not_available" };
     const option = optionRes.rows[0];
 
+    const todayStr = getTodayDateIST();
+    if (bookingDate < todayStr) {
+        return { status: "slot_not_available", message: "Cannot select a date in the past. Please select an upcoming date." };
+    }
+
     const matchedSlot = findMatchingSlot(bookingTimeSlot);
     if (!matchedSlot) return { status: "invalid_time_slot" };
+
+    if (!isSlotUpcoming(bookingDate, matchedSlot.startTime)) {
+        return { status: "slot_not_available", message: "Selected time slot has already passed. Please select an upcoming time slot." };
+    }
+    if (!matchedSlot) return { status: "invalid_time_slot" };
+
+    if (!isSlotUpcoming(bookingDate, matchedSlot.startTime)) {
+        return { status: "slot_not_available", message: "Selected time slot has already passed. Please select an upcoming time slot." };
+    }
 
     const normType = normalizeSubServiceType(subServiceInfo.sub_service_code, subServiceInfo.sub_service_name);
     let selectedAddress = null;
@@ -628,6 +712,11 @@ export const createBookingEntry = async ({
     if (review.status !== "ok") return review;
 
     const matchedSlot = findMatchingSlot(bookingTimeSlot);
+    if (!matchedSlot) return { status: "invalid_time_slot" };
+
+    if (!isSlotUpcoming(bookingDate, matchedSlot.startTime)) {
+        return { status: "slot_not_available", message: "Selected time slot has already passed. Please select an upcoming time slot." };
+    }
     const mode = String(paymentMode ?? "").trim().toUpperCase();
     if (mode !== "PAY_NOW" && mode !== "PAY_LATER") {
         return { status: "invalid_payment_mode" };
@@ -678,10 +767,12 @@ export const createBookingEntry = async ({
                 service_id, sub_service_id, service_option_id,
                 booking_date, booking_time_slot, slot_start_time, slot_end_time,
                 base_price, delivery_charge, commission_amount, discount_amount, final_amount,
+                paid_amount, due_amount,
                 coupon_id, coupon_code, payment_mode, payment_status, booking_status, notes,
                 address_id
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18, $19, $20, $21, $22, $23, $24, $25
             ) RETURNING booking_id, booking_number, created_at`,
             [
                 bookingNumber,
@@ -699,6 +790,8 @@ export const createBookingEntry = async ({
                 review.pricing.deliveryCharge,
                 review.pricing.commissionAmount,
                 review.pricing.discountAmount,
+                review.pricing.finalAmount,
+                0.00,
                 review.pricing.finalAmount,
                 couponId,
                 review.pricing.coupon?.couponCode ?? null,
@@ -914,7 +1007,10 @@ export const getUserBookings = async (userId, type = null) => {
                 b.discount_amount AS "discountAmount",
                 COALESCE(b.extra_amount, 0) AS "extraAmount",
                 COALESCE(b.paid_amount, 0) AS "paidAmount",
-                COALESCE(b.due_amount, 0) AS "dueAmount",
+                CASE
+                    WHEN b.payment_status = 'PAID' THEN 0
+                    ELSE COALESCE(NULLIF(b.due_amount, 0), GREATEST(0, b.final_amount - COALESCE(b.paid_amount, 0)))
+                END AS "dueAmount",
                 b.final_amount AS "finalAmount", b.coupon_code AS "couponCode",
                 b.payment_mode AS "paymentMode", b.payment_status AS "paymentStatus",
                 b.booking_status AS "bookingStatus", b.notes AS "notes", b.created_at AS "createdAt",
@@ -984,7 +1080,10 @@ export const getUserBookingById = async (userId, bookingId) => {
                 b.discount_amount AS "discountAmount",
                 COALESCE(b.extra_amount, 0) AS "extraAmount",
                 COALESCE(b.paid_amount, 0) AS "paidAmount",
-                COALESCE(b.due_amount, 0) AS "dueAmount",
+                CASE
+                    WHEN b.payment_status = 'PAID' THEN 0
+                    ELSE COALESCE(NULLIF(b.due_amount, 0), GREATEST(0, b.final_amount - COALESCE(b.paid_amount, 0)))
+                END AS "dueAmount",
                 b.final_amount AS "finalAmount", b.coupon_code AS "couponCode",
                 b.payment_mode AS "paymentMode", b.payment_status AS "paymentStatus",
                 b.booking_status AS "bookingStatus", b.notes AS "notes", b.created_at AS "createdAt",
