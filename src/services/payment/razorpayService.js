@@ -40,15 +40,32 @@ export const createRazorpayOrderForBooking = async ({ userId, bookingId }) => {
         return { status: "booking_cancelled", message: "Cannot pay for a cancelled booking" };
     }
 
-    const dueAmount = booking.due_amount !== null && booking.due_amount !== undefined
-        ? Number(booking.due_amount)
-        : (booking.payment_status === "PAID" ? 0 : Number(booking.final_amount));
+    const finalAmount = Number(booking.final_amount || 0);
+    const paidAmount = Number(booking.paid_amount || 0);
 
-    if (booking.payment_status === "PAID" || dueAmount <= 0) {
+    if (booking.payment_status === "PAID" || (finalAmount > 0 && paidAmount >= finalAmount)) {
         return { status: "already_paid", message: "This booking is already paid" };
     }
 
-    const orderAmount = dueAmount > 0 ? dueAmount : Number(booking.final_amount);
+    // Determine due amount:
+    // 1. If due_amount in DB is set and > 0, use it.
+    // 2. Otherwise calculate: final_amount - paid_amount.
+    // 3. Fallback to final_amount if unpaid.
+    let dueAmount = 0;
+    if (booking.due_amount !== null && booking.due_amount !== undefined && Number(booking.due_amount) > 0) {
+        dueAmount = Number(booking.due_amount);
+    } else {
+        dueAmount = Math.max(0, finalAmount - paidAmount);
+        if (dueAmount === 0 && paidAmount === 0 && finalAmount > 0) {
+            dueAmount = finalAmount;
+        }
+    }
+
+    if (dueAmount <= 0) {
+        return { status: "already_paid", message: "This booking is already paid" };
+    }
+
+    const orderAmount = dueAmount;
     if (orderAmount <= 0) {
         return { status: "invalid_amount", message: "Booking payable amount must be greater than zero" };
     }

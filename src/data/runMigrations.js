@@ -27,6 +27,7 @@ const migrations = [
     "profile_creation/add_address_details_and_account_deletion.sql",
     "media/create_media_files_and_profile_pic_id.sql",
     "user_creation/allow_guest_user_device_details.sql",
+    "booking_and_coupons/fix_service_bookings_due_amount.sql",
 ];
 
 const run = async () => {

@@ -5,6 +5,10 @@ import {
     calculateDiscount,
     computeSlotsForDate,
     findMatchingSlot,
+    getTodayDateIST,
+    getCurrentMinutesIST,
+    getUpcomingDatesIST,
+    isSlotUpcoming,
 } from "../src/models/user/service/booking/serviceBookingModel.js";
 import {
     calculateServicePrice,
@@ -50,6 +54,60 @@ test("computeSlotsForDate generates 2-hour slots for upcoming date", () => {
     assert.equal(slots.length, BASE_SLOTS.length);
     assert.equal(slots[0].durationHours, 2);
     assert.equal(slots[0].slotId, "09:00-11:00");
+});
+
+test("computeSlotsForDate filters out past slots on today's date when time is 3:00 PM", () => {
+    const today = getTodayDateIST();
+    // Simulate current time as 3:00 PM (15:00 = 900 minutes)
+    const simulatedCurrentMinutes = 15 * 60; // 3:00 PM IST
+    const slots = computeSlotsForDate(today, new Map(), simulatedCurrentMinutes);
+
+    // 09:00 AM, 11:00 AM, 01:00 PM, and 03:00 PM are already past or currently starting
+    // Only 05:00 PM - 07:00 PM should be returned
+    assert.equal(slots.length, 1);
+    assert.equal(slots[0].slotId, "17:00-19:00");
+    assert.equal(slots[0].display, "05:00 PM - 07:00 PM");
+});
+
+test("computeSlotsForDate filters out morning slots when time is 10:00 AM", () => {
+    const today = getTodayDateIST();
+    // Simulate current time as 10:00 AM (10 * 60 = 600 minutes)
+    const simulatedCurrentMinutes = 10 * 60;
+    const slots = computeSlotsForDate(today, new Map(), simulatedCurrentMinutes);
+
+    // 09:00 AM slot is past/within 30 mins buffer
+    // 11:00 AM, 01:00 PM, 03:00 PM, 05:00 PM should be available
+    assert.equal(slots.length, 4);
+    assert.equal(slots[0].slotId, "11:00-13:00");
+    assert.equal(slots[1].slotId, "13:00-15:00");
+    assert.equal(slots[2].slotId, "15:00-17:00");
+    assert.equal(slots[3].slotId, "17:00-19:00");
+});
+
+test("computeSlotsForDate returns empty array for past dates", () => {
+    const pastDate = "2020-01-01";
+    const slots = computeSlotsForDate(pastDate);
+    assert.equal(slots.length, 0);
+});
+
+test("isSlotUpcoming correctly identifies past vs future slots", () => {
+    const today = getTodayDateIST();
+    const simulated3PM = 15 * 60; // 3:00 PM
+
+    // 11:00 AM and 01:00 PM are in the past when it's 3:00 PM
+    assert.equal(isSlotUpcoming(today, "09:00:00", 30, simulated3PM), false);
+    assert.equal(isSlotUpcoming(today, "11:00:00", 30, simulated3PM), false);
+    assert.equal(isSlotUpcoming(today, "13:00:00", 30, simulated3PM), false);
+    assert.equal(isSlotUpcoming(today, "15:00:00", 30, simulated3PM), false);
+
+    // 05:00 PM is upcoming
+    assert.equal(isSlotUpcoming(today, "17:00:00", 30, simulated3PM), true);
+
+    // Any slot on future date is upcoming
+    assert.equal(isSlotUpcoming("2099-01-01", "09:00:00"), true);
+
+    // Any slot on past date is not upcoming
+    assert.equal(isSlotUpcoming("2020-01-01", "17:00:00"), false);
 });
 
 test("normalizeSubServiceType identifies delivery mode correctly", () => {
